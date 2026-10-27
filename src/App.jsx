@@ -15,6 +15,31 @@ const clean = (value) =>
 
 const normalize = (value) => clean(value).toLowerCase()
 
+const normalizeDate = (value) => {
+  const text = clean(value)
+  if (!text || text === '—') return ''
+
+  const match = text.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/)
+
+  if (match) {
+    let [, day, month, year] = match
+    if (year.length === 2) year = `20${year}`
+
+    return `${day.padStart(2, '0')}-${month.padStart(2, '0')}-${year}`
+  }
+
+  const parsed = new Date(text)
+
+  if (!Number.isNaN(parsed.getTime())) {
+    const day = String(parsed.getDate()).padStart(2, '0')
+    const month = String(parsed.getMonth() + 1).padStart(2, '0')
+    const year = parsed.getFullYear()
+    return `${day}-${month}-${year}`
+  }
+
+  return text
+}
+
 function App() {
   const [workbook, setWorkbook] = useState(null)
   const [fileName, setFileName] = useState('')
@@ -23,7 +48,10 @@ function App() {
   const [widthFilter, setWidthFilter] = useState('')
   const [igpFilter, setIgpFilter] = useState('')
   const [poFilter, setPoFilter] = useState('')
+  const [serialFilter, setSerialFilter] = useState('')
+  const [lastReceivedFilter, setLastReceivedFilter] = useState('')
   const [error, setError] = useState('')
+  const [hideZeroStock, setHideZeroStock] = useState(false)
 
   const handleUpload = (event) => {
     const file = event.target.files?.[0]
@@ -56,8 +84,12 @@ function App() {
         setWidthFilter('')
         setIgpFilter('')
         setPoFilter('')
+        setSerialFilter('')
+        setLastReceivedFilter('')
       } catch {
-        setError('Excel file read nahi ho saki. Please correct Excel file upload karein.')
+        setError(
+          'Excel file read nahi ho saki. Please correct Excel file upload karein.',
+        )
       }
     }
 
@@ -100,11 +132,25 @@ function App() {
       )
 
     const columns = {
-      date: findColumn([/^date$/i]),
-      quality: findColumn([/^quality$/i, /^quality\s*\/\s*construction$/i]),
-      width: findColumn([/^width$/i, /^witdh$/i, /^g\.?\s*width$/i, /^g\.?\s*witdh$/i]),
+      lastReceived: findColumn([/^last\s*received$/i]),
+      quality: findColumn([
+        /^quality$/i,
+        /^quality\s*\/\s*construction$/i,
+      ]),
+      width: findColumn([
+        /^width$/i,
+        /^witdh$/i,
+        /^g\.?\s*width$/i,
+        /^g\.?\s*witdh$/i,
+      ]),
       igp: findColumn([/\bigp\b/i, /\bgrn\b/i]),
       po: findColumn([/\bpo\b/i, /contract/i]),
+      serial: findColumn([/^sr\.?[-\s]*$/i, /^serial(?:\s*number)?$/i]),
+      itemCode: findColumn([/^item\s*code$/i, /^item\s*#$/i]),
+      weaveBlendSelvedge: findColumn([
+        /^weave\s*,?\s*blend\s*,?\s*selvedge$/i,
+        /^weave\s*blend\s*selvedge$/i,
+      ]),
     }
 
     const closingRowIndex = matrix.findIndex((row) =>
@@ -123,7 +169,6 @@ function App() {
         stockColumns = {
           rolls: closingColumn,
           aGrade: closingColumn + 1,
-          bGrade: closingColumn + 2,
         }
       }
     }
@@ -140,13 +185,22 @@ function App() {
   }, [workbook, selectedSheet])
 
   const getCell = (row, patterns) => {
-    const headerIndex = data.headers?.findIndex((header) =>
+    const headerIndex = data.headers.findIndex((header) =>
       patterns.some((pattern) => pattern.test(clean(header))),
     )
 
-    if (headerIndex === undefined || headerIndex === -1) return '—'
+    if (headerIndex === -1) return '—'
 
     const value = clean(row.values[headerIndex])
+    return value || '—'
+  }
+
+  const getColumnCell = (row, columnIndex) => {
+    if (columnIndex === undefined || columnIndex === null || columnIndex < 0) {
+      return '—'
+    }
+
+    const value = clean(row.values[columnIndex])
     return value || '—'
   }
 
@@ -156,47 +210,60 @@ function App() {
     return value || '0'
   }
 
-  const formatDate = (value) => {
-    if (value === undefined || value === null || clean(value) === '') {
-      return '—'
-    }
-
-    return clean(value)
-  }
-
   const filteredRows = useMemo(() => {
     return data.rows.filter((row) => {
-      const quality =
-        data.columns.quality >= 0
-          ? normalize(row.values[data.columns.quality])
-          : ''
-      const width =
-        data.columns.width >= 0
-          ? normalize(row.values[data.columns.width])
-          : ''
-      const igp =
-        data.columns.igp >= 0
-          ? normalize(row.values[data.columns.igp])
-          : ''
-      const po =
-        data.columns.po >= 0
-          ? normalize(row.values[data.columns.po])
-          : ''
+      const valueAt = (column) =>
+        column >= 0 ? clean(row.values[column]) : ''
+
+      const quality = normalize(valueAt(data.columns.quality))
+      const width = normalize(valueAt(data.columns.width))
+      const igp = normalize(valueAt(data.columns.igp))
+      const po = normalize(valueAt(data.columns.po))
+      const serial = normalize(valueAt(data.columns.serial))
+
+      const lastReceived = normalizeDate(valueAt(data.columns.lastReceived))
+      const requestedDate = normalizeDate(lastReceivedFilter)
+
+      const parseStock = (columnIndex) => {
+        if (!data.stockColumns || columnIndex === undefined || columnIndex === null) return 0
+        const rawValue = clean(row.values[columnIndex]).replace(/,/g, '')
+        const numberValue = Number(rawValue)
+        return rawValue === '' || !Number.isFinite(numberValue) ? 0 : numberValue
+      }
+
+      const rolls = parseStock(data.stockColumns?.rolls)
+      const meters = parseStock(data.stockColumns?.aGrade)
+      const hasStock = rolls !== 0 || meters !== 0
 
       return (
+        (!hideZeroStock || hasStock) &&
         (!qualityFilter || quality.includes(normalize(qualityFilter))) &&
         (!widthFilter || width.includes(normalize(widthFilter))) &&
         (!igpFilter || igp.includes(normalize(igpFilter))) &&
-        (!poFilter || po.includes(normalize(poFilter)))
+        (!poFilter || po.includes(normalize(poFilter))) &&
+        (!serialFilter || serial.includes(normalize(serialFilter))) &&
+        (!lastReceivedFilter ||
+          normalize(lastReceived) === normalize(requestedDate))
       )
     })
-  }, [data, qualityFilter, widthFilter, igpFilter, poFilter])
+  }, [
+    data,
+    qualityFilter,
+    widthFilter,
+    igpFilter,
+    poFilter,
+    serialFilter,
+    lastReceivedFilter,
+    hideZeroStock,
+  ])
 
   const clearFilters = () => {
     setQualityFilter('')
     setWidthFilter('')
     setIgpFilter('')
     setPoFilter('')
+    setSerialFilter('')
+    setLastReceivedFilter('')
   }
 
   return (
@@ -215,15 +282,7 @@ function App() {
         </div>
       </header>
 
-      <section className="intro">
-        <span className="eyebrow">INVENTORY MANAGEMENT</span>
-        <h2>Find your stock, faster.</h2>
-        <p>
-          Upload the latest stock report, select a sheet and search your
-          inventory using the available filters.
-        </p>
-      </section>
-
+    
       <section className="panel">
         <label htmlFor="excel-upload">Upload complete Excel stock file</label>
         <input
@@ -312,6 +371,39 @@ function App() {
               placeholder="Search PO / Contract"
             />
           </div>
+
+          <div className="field">
+            <label htmlFor="serial-filter">Serial (Sr-)</label>
+            <input
+              id="serial-filter"
+              value={serialFilter}
+              onChange={(event) => setSerialFilter(event.target.value)}
+              placeholder="Enter serial number"
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="last-received-filter">Last Received (DD-MM-YYYY)</label>
+            <input
+              id="last-received-filter"
+              value={lastReceivedFilter}
+              onChange={(event) => setLastReceivedFilter(event.target.value)}
+              placeholder="DD-MM-YYYY"
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '16px', fontSize: '13px', fontWeight: 700 }}>
+          <input
+            id="hide-zero-stock"
+            type="checkbox"
+            checked={hideZeroStock}
+            onChange={(event) => setHideZeroStock(event.target.checked)}
+            style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+          />
+          <label htmlFor="hide-zero-stock" style={{ cursor: 'pointer' }}>
+            Hide Zero Stock
+          </label>
         </div>
 
         <div className="notice">
@@ -357,45 +449,59 @@ function App() {
         ) : (
           <div className="stock-list">
             {filteredRows.map((row) => {
-              const quality =
-                data.columns.quality >= 0
-                  ? clean(row.values[data.columns.quality]) || 'Quality not available'
-                  : 'Quality not available'
-
-              const width =
-                data.columns.width >= 0
-                  ? clean(row.values[data.columns.width]) || '—'
-                  : '—'
-
-              const date =
-                data.columns.date >= 0
-                  ? formatDate(row.values[data.columns.date])
-                  : '—'
+              const quality = getColumnCell(row, data.columns.quality)
+              const width = getColumnCell(row, data.columns.width)
+              const lastReceived = normalizeDate(
+                getColumnCell(row, data.columns.lastReceived),
+              )
 
               return (
                 <article className="stock-card" key={row.id}>
                   <div className="stock-date">
-                    <span>Date</span>
-                    <strong>{date}</strong>
+                    <span>Last Received</span>
+                    <strong>{lastReceived || '—'}</strong>
                   </div>
 
                   <div className="stock-card-title">
                     <div>
                       <span className="card-eyebrow">STOCK ITEM</span>
-                      <h3>{quality}</h3>
+                      <h3>
+                        {quality === '—' ? 'Quality not available' : quality}
+                      </h3>
                     </div>
                     <span className="width-tag">Width: {width}</span>
                   </div>
 
                   <div className="record-details">
-                    <div className="detail-row">
+                    <div className="detail-row item-code-box">
+                      <span className="detail-label">Item Code</span>
+                      <span className="detail-value">
+                        {getColumnCell(row, data.columns.itemCode)}
+                      </span>
+                    </div>
+
+                    <div className="detail-row serial-box">
+                      <span className="detail-label">Sr-</span>
+                      <span className="detail-value">
+                        {getColumnCell(row, data.columns.serial)}
+                      </span>
+                    </div>
+
+                    <div className="detail-row weave-box">
+                      <span className="detail-label">Weave, Blend, Selvedge</span>
+                      <span className="detail-value">
+                        {getColumnCell(row, data.columns.weaveBlendSelvedge)}
+                      </span>
+                    </div>
+
+                    <div className="detail-row supplier-box">
                       <span className="detail-label">Supplier</span>
                       <span className="detail-value">
                         {getCell(row, [/^greige\s*supplier$/i])}
                       </span>
                     </div>
 
-                    <div className="detail-row">
+                    <div className="detail-row customer-box">
                       <span className="detail-label">Customer</span>
                       <span className="detail-value">
                         {getCell(row, [/^processing\s*customer$/i])}
@@ -419,21 +525,11 @@ function App() {
                       </strong>
                       <span className="amount-unit">MTR</span>
                     </div>
-
-                    <div className="amount-box b-grade-box">
-                      <span className="amount-label">B-Grade</span>
-                      <strong className="amount-value">
-                        {getStockCell(row, data.stockColumns?.bGrade)}
-                      </strong>
-                      <span className="amount-unit">MTR</span>
-                    </div>
                   </div>
 
                   <div className="remarks-box">
                     <span className="remarks-label">Remarks</span>
-                    <p>
-                      {getCell(row, [/^remarks?$/i, /remarks?/i])}
-                    </p>
+                    <p>{getCell(row, [/^remarks?$/i, /remarks?/i])}</p>
                   </div>
                 </article>
               )
