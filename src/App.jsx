@@ -1,3 +1,4 @@
+
 import { useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import './App.css'
@@ -133,20 +134,27 @@ function App() {
 
     const columns = {
       lastReceived: findColumn([/^last\s*received$/i]),
+
       quality: findColumn([
         /^quality$/i,
         /^quality\s*\/\s*construction$/i,
       ]),
+
       width: findColumn([
         /^width$/i,
         /^witdh$/i,
         /^g\.?\s*width$/i,
         /^g\.?\s*witdh$/i,
       ]),
+
       igp: findColumn([/\bigp\b/i, /\bgrn\b/i]),
       po: findColumn([/\bpo\b/i, /contract/i]),
       serial: findColumn([/^sr\.?[-\s]*$/i, /^serial(?:\s*number)?$/i]),
       itemCode: findColumn([/^item\s*code$/i, /^item\s*#$/i]),
+
+      // Excel ka Type column
+      type: findColumn([/^type$/i]),
+
       weaveBlendSelvedge: findColumn([
         /^weave\s*,?\s*blend\s*,?\s*selvedge$/i,
         /^weave\s*blend\s*selvedge$/i,
@@ -206,6 +214,7 @@ function App() {
 
   const getStockCell = (row, columnIndex) => {
     if (columnIndex === undefined || columnIndex === null) return '—'
+
     const value = clean(row.values[columnIndex])
     return value || '0'
   }
@@ -225,10 +234,20 @@ function App() {
       const requestedDate = normalizeDate(lastReceivedFilter)
 
       const parseStock = (columnIndex) => {
-        if (!data.stockColumns || columnIndex === undefined || columnIndex === null) return 0
+        if (
+          !data.stockColumns ||
+          columnIndex === undefined ||
+          columnIndex === null
+        ) {
+          return 0
+        }
+
         const rawValue = clean(row.values[columnIndex]).replace(/,/g, '')
         const numberValue = Number(rawValue)
-        return rawValue === '' || !Number.isFinite(numberValue) ? 0 : numberValue
+
+        return rawValue === '' || !Number.isFinite(numberValue)
+          ? 0
+          : numberValue
       }
 
       const rolls = parseStock(data.stockColumns?.rolls)
@@ -271,6 +290,7 @@ function App() {
       <header className="topbar">
         <div className="brand">
           <div className="brand-icon">S</div>
+
           <div>
             <h1>Stock Search</h1>
             <p>Inventory lookup dashboard</p>
@@ -282,9 +302,11 @@ function App() {
         </div>
       </header>
 
-    
       <section className="panel">
-        <label htmlFor="excel-upload">Upload complete Excel stock file</label>
+        <label htmlFor="excel-upload">
+          Upload complete Excel stock file
+        </label>
+
         <input
           id="excel-upload"
           type="file"
@@ -309,6 +331,7 @@ function App() {
         </div>
 
         <label htmlFor="sheet-select">Select sheet</label>
+
         <select
           id="sheet-select"
           value={selectedSheet}
@@ -326,7 +349,12 @@ function App() {
             <h3>Search Filters</h3>
             <p>Enter one or more values to narrow down the results.</p>
           </div>
-          <button className="clear-button" onClick={clearFilters} type="button">
+
+          <button
+            className="clear-button"
+            onClick={clearFilters}
+            type="button"
+          >
             Clear filters
           </button>
         </div>
@@ -383,7 +411,9 @@ function App() {
           </div>
 
           <div className="field">
-            <label htmlFor="last-received-filter">Last Received (DD-MM-YYYY)</label>
+            <label htmlFor="last-received-filter">
+              Last Received (DD-MM-YYYY)
+            </label>
             <input
               id="last-received-filter"
               value={lastReceivedFilter}
@@ -393,7 +423,16 @@ function App() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '16px', fontSize: '13px', fontWeight: 700 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            marginTop: '16px',
+            fontSize: '13px',
+            fontWeight: 700,
+          }}
+        >
           <input
             id="hide-zero-stock"
             type="checkbox"
@@ -401,6 +440,7 @@ function App() {
             onChange={(event) => setHideZeroStock(event.target.checked)}
             style={{ width: '16px', height: '16px', cursor: 'pointer' }}
           />
+
           <label htmlFor="hide-zero-stock" style={{ cursor: 'pointer' }}>
             Hide Zero Stock
           </label>
@@ -419,12 +459,14 @@ function App() {
         <div className="results-heading">
           <div>
             <h3>Stock Results</h3>
+
             <p>
               {workbook
                 ? `Showing records from ${selectedSheet}`
                 : 'Upload an Excel file to view your stock.'}
             </p>
           </div>
+
           <span className="count">{filteredRows.length} records</span>
         </div>
 
@@ -451,6 +493,7 @@ function App() {
             {filteredRows.map((row) => {
               const quality = getColumnCell(row, data.columns.quality)
               const width = getColumnCell(row, data.columns.width)
+
               const lastReceived = normalizeDate(
                 getColumnCell(row, data.columns.lastReceived),
               )
@@ -469,6 +512,7 @@ function App() {
                         {quality === '—' ? 'Quality not available' : quality}
                       </h3>
                     </div>
+
                     <span className="width-tag">Width: {width}</span>
                   </div>
 
@@ -488,7 +532,9 @@ function App() {
                     </div>
 
                     <div className="detail-row weave-box">
-                      <span className="detail-label">Weave, Blend, Selvedge</span>
+                      <span className="detail-label">
+                        Weave, Blend, Selvedge
+                      </span>
                       <span className="detail-value">
                         {getColumnCell(row, data.columns.weaveBlendSelvedge)}
                       </span>
@@ -510,19 +556,25 @@ function App() {
                   </div>
 
                   <div className="stock-amounts">
+                    {/* Type aur R-B ab ek hi box mein hain */}
                     <div className="amount-box rolls-box">
-                      <span className="amount-label">Rolls / Bales</span>
+                      <span className="amount-label">Type / Rolls-Bales</span>
+
                       <strong className="amount-value">
+                        {getColumnCell(row, data.columns.type)} /{' '}
                         {getStockCell(row, data.stockColumns?.rolls)}
                       </strong>
-                      <span className="amount-unit">R-B</span>
+
+                      <span className="amount-unit">Type / R-B</span>
                     </div>
 
                     <div className="amount-box a-grade-box">
                       <span className="amount-label">A-Grade</span>
+
                       <strong className="amount-value">
                         {getStockCell(row, data.stockColumns?.aGrade)}
                       </strong>
+
                       <span className="amount-unit">MTR</span>
                     </div>
                   </div>
