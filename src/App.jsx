@@ -258,7 +258,7 @@ function App() {
 
   const clearFilters = () => { setQualityFilter(''); setWidthFilter(''); setIgpFilter(''); setPoFilter(''); setSupplierFilter(''); setCustomerFilter(''); setSerialFilter(''); setLastReceivedFilter('') }
 
-  if (isLoading) return <main className="app"><div className="empty-state"><h3>Loading saved stock...</h3><p>Firebase se purana data load ho raha hai</p></div></main>
+  if (isLoading) return <main className="app"><div className="empty-state"><h3>Loading saved stock...</h3><p>stock data loading </p></div></main>
 
   return (
     <main className="app">
