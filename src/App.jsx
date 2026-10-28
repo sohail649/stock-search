@@ -1,4 +1,3 @@
-
 import { useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import './App.css'
@@ -7,6 +6,7 @@ const SHEETS = [
   'Daily Stock Report (Own)',
   'Daily Stock Report (Commercial)',
   'Free For Sale (Own)',
+   'Free Of Cost (Own)',
 ]
 
 const clean = (value) =>
@@ -20,6 +20,7 @@ const normalizeDate = (value) => {
   const text = clean(value)
   if (!text || text === '—') return ''
 
+  // Excel serial dates are handled by the workbook parser where possible.
   const match = text.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/)
 
   if (match) {
@@ -41,14 +42,46 @@ const normalizeDate = (value) => {
   return text
 }
 
+const getWorkbookStockDate = (workbook) => {
+  // Row 3: merged A3:E3 or A3:F3 stores its value in A3.
+  // Try the named stock sheets in order; only use a non-empty date.
+  for (const sheetName of SHEETS) {
+    const sheet = workbook.Sheets[sheetName]
+    if (!sheet) continue
+
+    const cell = sheet.A3
+    if (!cell || cell.v === undefined || cell.v === null || clean(cell.v) === '') {
+      continue
+    }
+
+    let value = cell.v
+    if (cell.t === 'n' && typeof value === 'number') {
+      const parsed = XLSX.SSF.parse_date_code(value)
+      if (parsed) {
+        value = `${String(parsed.d).padStart(2, '0')}-${String(parsed.m).padStart(2, '0')}-${parsed.y}`
+        return value
+      }
+    }
+
+    const formatted = cell.w ? clean(cell.w) : clean(value)
+    const normalized = normalizeDate(formatted)
+    if (normalized) return normalized
+  }
+
+  return ''
+}
+
 function App() {
   const [workbook, setWorkbook] = useState(null)
   const [fileName, setFileName] = useState('')
+  const [stockUpdatedTill, setStockUpdatedTill] = useState('')
   const [selectedSheet, setSelectedSheet] = useState(SHEETS[0])
   const [qualityFilter, setQualityFilter] = useState('')
   const [widthFilter, setWidthFilter] = useState('')
   const [igpFilter, setIgpFilter] = useState('')
   const [poFilter, setPoFilter] = useState('')
+  const [supplierFilter, setSupplierFilter] = useState('')
+  const [customerFilter, setCustomerFilter] = useState('')
   const [serialFilter, setSerialFilter] = useState('')
   const [lastReceivedFilter, setLastReceivedFilter] = useState('')
   const [error, setError] = useState('')
@@ -65,7 +98,7 @@ function App() {
     reader.onload = (e) => {
       try {
         const bytes = new Uint8Array(e.target.result)
-        const newWorkbook = XLSX.read(bytes, { type: 'array' })
+        const newWorkbook = XLSX.read(bytes, { type: 'array', cellDates: true })
 
         const missingSheets = SHEETS.filter(
           (sheetName) => !newWorkbook.SheetNames.includes(sheetName),
@@ -78,13 +111,18 @@ function App() {
           return
         }
 
+        const newStockDate = getWorkbookStockDate(newWorkbook)
+
         setWorkbook(newWorkbook)
         setFileName(file.name)
+        setStockUpdatedTill(newStockDate)
         setSelectedSheet(SHEETS[0])
         setQualityFilter('')
         setWidthFilter('')
         setIgpFilter('')
         setPoFilter('')
+        setSupplierFilter('')
+        setCustomerFilter('')
         setSerialFilter('')
         setLastReceivedFilter('')
       } catch {
@@ -149,10 +187,11 @@ function App() {
 
       igp: findColumn([/\bigp\b/i, /\bgrn\b/i]),
       po: findColumn([/\bpo\b/i, /contract/i]),
+      supplier: findColumn([/^greige\s*supplier$/i]),
+      customer: findColumn([/^processing\s*customer$/i]),
       serial: findColumn([/^sr\.?[-\s]*$/i, /^serial(?:\s*number)?$/i]),
       itemCode: findColumn([/^item\s*code$/i, /^item\s*#$/i]),
 
-      // Excel ka Type column
       type: findColumn([/^type$/i]),
 
       weaveBlendSelvedge: findColumn([
@@ -181,13 +220,25 @@ function App() {
       }
     }
 
-    const rows = matrix
-      .slice(headerIndex + 1)
-      .filter((row) => row.some((cell) => clean(cell) !== ''))
-      .map((row, index) => ({
-        id: index,
-        values: row,
-      }))
+  
+const rows = matrix
+  .slice(headerIndex + 1)
+  .filter((row) => {
+    const quality = clean(row[columns.quality])
+    const width = clean(row[columns.width])
+    const weaveBlendSelvedge = clean(
+      row[columns.weaveBlendSelvedge],
+    )
+
+    return Boolean(
+      quality || width || weaveBlendSelvedge
+    )
+  })
+  .map((row, index) => ({
+    id: index,
+    values: row,
+  }))
+
 
     return { rows, columns, stockColumns, headers }
   }, [workbook, selectedSheet])
@@ -228,6 +279,8 @@ function App() {
       const width = normalize(valueAt(data.columns.width))
       const igp = normalize(valueAt(data.columns.igp))
       const po = normalize(valueAt(data.columns.po))
+      const supplier = normalize(valueAt(data.columns.supplier))
+      const customer = normalize(valueAt(data.columns.customer))
       const serial = normalize(valueAt(data.columns.serial))
 
       const lastReceived = normalizeDate(valueAt(data.columns.lastReceived))
@@ -260,6 +313,8 @@ function App() {
         (!widthFilter || width.includes(normalize(widthFilter))) &&
         (!igpFilter || igp.includes(normalize(igpFilter))) &&
         (!poFilter || po.includes(normalize(poFilter))) &&
+        (!supplierFilter || supplier.includes(normalize(supplierFilter))) &&
+        (!customerFilter || customer.includes(normalize(customerFilter))) &&
         (!serialFilter || serial.includes(normalize(serialFilter))) &&
         (!lastReceivedFilter ||
           normalize(lastReceived) === normalize(requestedDate))
@@ -271,6 +326,8 @@ function App() {
     widthFilter,
     igpFilter,
     poFilter,
+    supplierFilter,
+    customerFilter,
     serialFilter,
     lastReceivedFilter,
     hideZeroStock,
@@ -281,6 +338,8 @@ function App() {
     setWidthFilter('')
     setIgpFilter('')
     setPoFilter('')
+    setSupplierFilter('')
+    setCustomerFilter('')
     setSerialFilter('')
     setLastReceivedFilter('')
   }
@@ -301,6 +360,13 @@ function App() {
           {workbook ? 'Excel Loaded' : 'Awaiting Excel'}
         </div>
       </header>
+
+      {workbook && (
+        <div className="stock-updated-till">
+          <strong>Stock Updated Till:</strong>{' '}
+          <span>{stockUpdatedTill || 'Date not found in Row 3'}</span>
+        </div>
+      )}
 
       <section className="panel">
         <label htmlFor="excel-upload">
@@ -401,6 +467,26 @@ function App() {
           </div>
 
           <div className="field">
+            <label htmlFor="supplier-filter">Supplier</label>
+            <input
+              id="supplier-filter"
+              value={supplierFilter}
+              onChange={(event) => setSupplierFilter(event.target.value)}
+              placeholder="Search supplier"
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="customer-filter">Customer</label>
+            <input
+              id="customer-filter"
+              value={customerFilter}
+              onChange={(event) => setCustomerFilter(event.target.value)}
+              placeholder="Search customer"
+            />
+          </div>
+
+          <div className="field">
             <label htmlFor="serial-filter">Serial (Sr-)</label>
             <input
               id="serial-filter"
@@ -493,6 +579,8 @@ function App() {
             {filteredRows.map((row) => {
               const quality = getColumnCell(row, data.columns.quality)
               const width = getColumnCell(row, data.columns.width)
+              const igpNumber = getColumnCell(row, data.columns.igp)
+              const contractNumber = getColumnCell(row, data.columns.po)
 
               const lastReceived = normalizeDate(
                 getColumnCell(row, data.columns.lastReceived),
@@ -541,22 +629,25 @@ function App() {
                     </div>
 
                     <div className="detail-row supplier-box">
-                      <span className="detail-label">Supplier</span>
+                      <span className="detail-label">Supplier / IGP-GRN</span>
                       <span className="detail-value">
                         {getCell(row, [/^greige\s*supplier$/i])}
+                        {' / '}
+                        {igpNumber}
                       </span>
                     </div>
 
                     <div className="detail-row customer-box">
-                      <span className="detail-label">Customer</span>
+                      <span className="detail-label">Customer / Contract</span>
                       <span className="detail-value">
                         {getCell(row, [/^processing\s*customer$/i])}
+                        {' / '}
+                        {contractNumber}
                       </span>
                     </div>
                   </div>
 
                   <div className="stock-amounts">
-                    {/* Type aur R-B ab ek hi box mein hain */}
                     <div className="amount-box rolls-box">
                       <span className="amount-label">Type / Rolls-Bales</span>
 
