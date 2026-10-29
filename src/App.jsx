@@ -25,6 +25,17 @@ const SHEETS = [
   'Free Of Cost (Own)',
 ]
 
+// === HIDDEN SHEET - UI pe show nahi hogi, sirf Commercial mein add hogi ===
+const HIDDEN_COMMERCIAL_SHEETS = [
+  'Stock Grey Finished 205',
+]
+
+// === COMMERCIAL MEIN COUNT HONE WALI SHEETS ===
+const COMMERCIAL_SHEETS = [
+  'Daily Stock Report (Commercial)',
+  'Stock Grey Finished 205',  // <-- Hidden wali sheet bhi commercial mein add
+]
+
 const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim()
 const normalize = (value) => clean(value).toLowerCase()
 const normalizeDate = (value) => {
@@ -112,7 +123,6 @@ const getSheetTotals = (workbook, sheetName) => {
   return { items: itemCount, rolls: totalRolls, aGrade: totalAGrade, bGrade: totalBGrade }
 }
 
-// FIX: Exact Commercial Issuance Total from Excel Row3/Row5 - 1,634,710
 const getExactIssuanceTotals = (workbook) => {
   if (!workbook) return null
   const result = {}
@@ -272,6 +282,7 @@ const getTransactions = (workbook, type) => {
   return allData
 }
 
+
 function App() {
   const [workbook, setWorkbook] = useState(null)
   const [fileName, setFileName] = useState('')
@@ -289,7 +300,7 @@ function App() {
   const [hideZeroStock, setHideZeroStock] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
-  const [currentView, setCurrentView] = useState('dashboard')
+  const [currentView, setCurrentView] = useState('home')
   const [issuedDateFilter, setIssuedDateFilter] = useState('')
   const [receivedDateFilter, setReceivedDateFilter] = useState('')
   const uploadRef = useRef(null)
@@ -324,13 +335,24 @@ function App() {
 
   const allTotals = useMemo(() => {
     if (!workbook) return null
+    // Visible 4 sheets only for UI
     const perSheet = SHEETS.map(name => ({ name, ...getSheetTotals(workbook, name) }))
-    const ownSheets = perSheet.filter(s => s.name !== 'Daily Stock Report (Commercial)')
-    const commercialSheet = perSheet.find(s => s.name === 'Daily Stock Report (Commercial)')
+    // Hidden sheet totals - Commercial mein add hoga lekin UI pe show nahi hoga
+    const hiddenTotals = HIDDEN_COMMERCIAL_SHEETS.map(name => ({ name, ...getSheetTotals(workbook, name), isHidden: true }))
+    
+    const ownSheets = perSheet.filter(s => !COMMERCIAL_SHEETS.includes(s.name))
+    const commercialVisible = perSheet.filter(s => COMMERCIAL_SHEETS.includes(s.name))
+    const commercialHidden = hiddenTotals.filter(s => COMMERCIAL_SHEETS.includes(s.name) && s.items > 0)
+    
     const ownTotal = ownSheets.reduce((acc, cur) => ({ items: acc.items + cur.items, rolls: acc.rolls + cur.rolls, aGrade: acc.aGrade + cur.aGrade, bGrade: acc.bGrade + cur.bGrade }), { items: 0, rolls: 0, aGrade: 0, bGrade: 0 })
-    const commercialTotal = commercialSheet || { items: 0, rolls: 0, aGrade: 0, bGrade: 0 }
-    const grand = perSheet.reduce((acc, cur) => ({ items: acc.items + cur.items, rolls: acc.rolls + cur.rolls, aGrade: acc.aGrade + cur.aGrade, bGrade: acc.bGrade + cur.bGrade }), { items: 0, rolls: 0, aGrade: 0, bGrade: 0 })
-    return { perSheet, ownTotal, commercialTotal, grand }
+    
+    // Commercial total = visible commercial + hidden commercial (Stock Grey Finished 205)
+    const allCommercialForTotal = [...commercialVisible, ...commercialHidden]
+    const commercialTotal = allCommercialForTotal.reduce((acc, cur) => ({ items: acc.items + cur.items, rolls: acc.rolls + cur.rolls, aGrade: acc.aGrade + cur.aGrade, bGrade: acc.bGrade + cur.bGrade }), { items: 0, rolls: 0, aGrade: 0, bGrade: 0 })
+    
+    const grand = [...perSheet, ...commercialHidden].reduce((acc, cur) => ({ items: acc.items + cur.items, rolls: acc.rolls + cur.rolls, aGrade: acc.aGrade + cur.aGrade, bGrade: acc.bGrade + cur.bGrade }), { items: 0, rolls: 0, aGrade: 0, bGrade: 0 })
+    
+    return { perSheet, ownTotal, commercialTotal, commercialSheets: allCommercialForTotal, ownSheets, grand, hiddenTotals: commercialHidden }
   }, [workbook])
 
   const exactTotals = useMemo(() => getExactIssuanceTotals(workbook), [workbook])
@@ -385,7 +407,7 @@ function App() {
         await setDoc(doc(db, 'stock', 'current'), { uploadId, fileName: file.name, stockUpdatedTill: newStockDate, chunkCount: totalChunks, createdAt: new Date().toISOString(), })
         setWorkbook(newWorkbook); setFileName(file.name); setStockUpdatedTill(newStockDate); setSelectedSheet(SHEETS[0])
         setQualityFilter(''); setWidthFilter(''); setIgpFilter(''); setPoFilter(''); setSupplierFilter(''); setCustomerFilter(''); setSerialFilter(''); setLastReceivedFilter('')
-        setError('File kamyabi se upload ho gayi!'); setCurrentView('dashboard')
+        setError('File kamyabi se upload ho gayi!'); setCurrentView('home')
       } catch { setError('Excel file read nahi ho saki.') } finally { setIsSaving(false) }
     }
     reader.onerror = () => { setError('File read nahi ho saki.'); setIsSaving(false) }
@@ -466,28 +488,98 @@ function App() {
   const clearFilters = () => { setQualityFilter(''); setWidthFilter(''); setIgpFilter(''); setPoFilter(''); setSupplierFilter(''); setCustomerFilter(''); setSerialFilter(''); setLastReceivedFilter('') }
 
   const NavButtons = () => (
-    <div style={{display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap'}}>
-      <button onClick={() => setCurrentView('dashboard')} style={{background: currentView==='dashboard' ? '#111827' : 'white', color: currentView==='dashboard' ? 'white' : '#111827', border:'1px solid #111827', padding:'9px 14px', borderRadius:'8px', fontWeight:700, cursor:'pointer'}}>Stock Search</button>
-      <button onClick={() => setCurrentView('summary')} style={{background: currentView==='summary' ? '#111827' : 'white', color: currentView==='summary' ? 'white' : '#111827', border:'1px solid #111827', padding:'9px 14px', borderRadius:'8px', fontWeight:700, cursor:'pointer'}}>Summary</button>
-      <button onClick={() => setCurrentView('issued')} style={{background: currentView==='issued' ? '#dc2626' : '#b91c1c', color:'white', padding:'9px 14px', borderRadius:'8px', border:'none', fontWeight:700, cursor:'pointer'}}>Issued</button>
-      <button onClick={() => setCurrentView('received')} style={{background: currentView==='received' ? '#059669' : '#047857', color:'white', padding:'9px 14px', borderRadius:'8px', border:'none', fontWeight:700, cursor:'pointer'}}>Received</button>
-      <button onClick={handleShowUpload} style={{background:'#2563eb', color:'white', padding:'9px 14px', borderRadius:'8px', border:'none', fontWeight:700, cursor:'pointer'}}>Upload New Stock</button>
-    </div>
+    <nav className="nav-buttons" aria-label="Stock pages">
+      <button className="nav-home" onClick={() => setCurrentView('home')} type="button">⌂ Home</button>
+    </nav>
+  )
+  
+  const FullNavButtons = () => (
+    <nav className="nav-buttons" aria-label="Stock pages">
+      <button className="nav-home" onClick={() => setCurrentView('home')} type="button">⌂ Home</button>
+      <button className={`nav-available ${currentView === 'dashboard' ? 'is-active' : ''}`} onClick={() => setCurrentView('dashboard')} type="button">Available Stock</button>
+      <button className={`nav-issued ${currentView === 'issued' ? 'is-active' : ''}`} onClick={() => setCurrentView('issued')} type="button">Issued Stock</button>
+      <button className={`nav-received ${currentView === 'received' ? 'is-active' : ''}`} onClick={() => setCurrentView('received')} type="button">Received Stock</button>
+      <button className={`nav-summary ${currentView === 'summary' ? 'is-active' : ''}`} onClick={() => setCurrentView('summary')} type="button">Stock Summary</button>
+      <button className="nav-upload" onClick={handleShowUpload} type="button">↑ Upload Stock</button>
+    </nav>
   )
 
   if (isLoading) return <main className="app"><div className="empty-state"><h3>Loading saved stock...</h3><p>stock data loading </p></div></main>
 
+  if (currentView === 'home') {
+    const grandMeters = allTotals ? allTotals.grand.aGrade + allTotals.grand.bGrade : 0
+    const grandRolls = allTotals ? allTotals.grand.rolls : 0
+    return (
+      <main className="app home-app">
+        <header className="topbar home-topbar">
+          <div className="brand">
+            <div className="brand-icon">▦</div>
+            <div><h1>Stock Manager</h1><p>Inventory Management System</p></div>
+                        <div className="status">{workbook ? '● Excel Loaded' : '● Ready to Start'}</div>
+
+          </div>
+          <div className="home-header-actions">
+            <button className="nav-upload" onClick={handleShowUpload} type="button">↑ Upload Stock</button>
+          </div>
+        </header>
+
+        <section className="home-hero">
+          <div className="hero-copy">
+            <span className="hero-eyebrow">SMART INVENTORY WORKSPACE</span>
+            <h2>Manage Your Stock <span>Smartly.</span></h2>
+            <p>Commercial counting configurable - add any sheet to commercial total</p>
+            {workbook && <div className="hero-date"><span>Stock updated through</span><strong>{stockUpdatedTill || 'Date not available'}</strong></div>}
+          </div>
+        </section>
+
+        <section className="workspace-section">
+          <div className="workspace-heading">
+            <span className="section-kicker">YOUR WORKSPACE</span>
+            <h2>Choose Your Workspace</h2>
+            <p>Select a page to get started.</p>
+          </div>
+          <div className="workspace-grid">
+            <button className="workspace-card card-available" onClick={() => setCurrentView('dashboard')} type="button">
+              <span className="workspace-icon">⌕</span><span className="workspace-arrow">↗</span>
+              <span className="workspace-title">Available Stock</span><span className="workspace-subtitle">Search inventory</span><span className="card-shine"></span>
+            </button>
+            <button className="workspace-card card-issued" onClick={() => setCurrentView('issued')} type="button">
+              <span className="workspace-icon">▣−</span><span className="workspace-arrow">↗</span>
+              <span className="workspace-title">Issued Stock</span><span className="workspace-subtitle">View issued records</span><span className="card-shine"></span>
+            </button>
+            <button className="workspace-card card-received" onClick={() => setCurrentView('received')} type="button">
+              <span className="workspace-icon">▣＋</span><span className="workspace-arrow">↗</span>
+              <span className="workspace-title">Received Stock</span><span className="workspace-subtitle">Check receiving records</span><span className="card-shine"></span>
+            </button>
+            <button className="workspace-card card-summary" onClick={() => setCurrentView('summary')} type="button">
+              <span className="workspace-icon">▥↗</span><span className="workspace-arrow">↗</span>
+              <span className="workspace-title">Stock Summary</span><span className="workspace-subtitle">Overview and reports - Commercial = {COMMERCIAL_SHEETS.join(' + ')}</span><span className="card-shine"></span>
+            </button>
+          </div>
+        </section>
+
+        <section className="home-metrics" aria-label="Stock overview">
+          <div className="metric-item"><span className="metric-symbol">▦</span><div><span>Total Stock</span><strong>{workbook ? grandMeters.toLocaleString() : '—'} <small>MTR</small></strong></div></div>
+          <div className="metric-item"><span className="metric-symbol">◉</span><div><span>Total Rolls</span><strong>{workbook ? grandRolls.toLocaleString() : '—'}</strong></div></div>
+          <div className="metric-item"><span className="metric-symbol">▦</span><div><span>Stock Sheets</span><strong>{workbook ? SHEETS.filter(name => workbook.Sheets[name]).length : '—'}</strong></div></div>
+        </section>
+
+        <footer className="home-footer"><strong>Dada Manager • Smart Inventory. Better Management.</strong><span>Commercial sheets: {COMMERCIAL_SHEETS.join(', ')}</span></footer>
+      </main>
+    )
+  }
+
   if (currentView === 'summary') {
     return (
       <main className="app">
-        <header className="topbar"><div className="brand"><div className="brand-icon">S</div><div><h1>Summary</h1><p>Stock totals overview</p></div></div><NavButtons /><div className="status">{workbook ? 'Excel Loaded' : 'Awaiting Excel'}</div></header>
+        <header className="topbar"><div className="brand"><div className="brand-icon">S</div><div><h1>Summary</h1><p>Commercial = {COMMERCIAL_SHEETS.join(' + ')}</p></div></div><NavButtons /><div className="status">{workbook ? 'Excel Loaded' : 'Awaiting Excel'}</div></header>
         {workbook && <div className="stock-updated-till"><strong>Stock Updated Till:</strong> <span>{stockUpdatedTill || 'Date not found'}</span></div>}
         {!allTotals ? <div className="empty-state"><h3>No data</h3><p>Upload Excel first</p></div> : (
           <section style={{margin:'16px 0'}}>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:'12px'}}>
+            <div className="summary-grid" style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:'12px'}}>
               {allTotals.perSheet.map((sheet) => (
-                <div key={sheet.name} style={{background:'white', border:'1px solid #e5e7eb', borderRadius:'12px', padding:'14px'}}>
-                  <div style={{fontSize:'11px', fontWeight:800, color:'#6b7280', textTransform:'uppercase', marginBottom:'6px'}}>{sheet.name}</div>
+                <div key={sheet.name} style={{background: COMMERCIAL_SHEETS.includes(sheet.name) ? '#fffbeb' : 'white', border: COMMERCIAL_SHEETS.includes(sheet.name) ? '2px solid #fbbf24' : '1px solid #e5e7eb', borderRadius:'12px', padding:'14px'}}>
+                  <div style={{fontSize:'11px', fontWeight:800, color: COMMERCIAL_SHEETS.includes(sheet.name) ? '#d97706' : '#6b7280', textTransform:'uppercase', marginBottom:'6px'}}>{sheet.name} {COMMERCIAL_SHEETS.includes(sheet.name) ? '⭐ COMMERCIAL' : ''}</div>
                   <div style={{display:'flex', justifyContent:'space-between', fontSize:'13px', marginBottom:'4px'}}><span>Items:</span><strong>{sheet.items}</strong></div>
                   <div style={{display:'flex', justifyContent:'space-between', fontSize:'13px', marginBottom:'4px'}}><span>Rolls:</span><strong>{sheet.rolls.toLocaleString()}</strong></div>
                   <div style={{display:'flex', justifyContent:'space-between', fontSize:'13px'}}><span>A-Grade:</span><strong style={{color:'#2563eb'}}>{sheet.aGrade.toLocaleString()}</strong></div>
@@ -496,9 +588,9 @@ function App() {
                 </div>
               ))}
             </div>
-            <div style={{marginTop:'16px', background:'#111827', color:'white', borderRadius:'12px', padding:'20px', display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'12px', textAlign:'center'}}>
-              <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'12px', opacity:0.7}}>TOTAL OWN METERS</div><div style={{fontSize:'11px', opacity:0.6}}>Own + Free Sale + Free Cost</div><div style={{fontSize:'24px', fontWeight:800, color:'#60a5fa', marginTop:'6px'}}>{(allTotals.ownTotal.aGrade + allTotals.ownTotal.bGrade).toLocaleString()} MTR</div><div style={{fontSize:'11px', opacity:0.7}}>Rolls: {allTotals.ownTotal.rolls.toLocaleString()} | A: {allTotals.ownTotal.aGrade.toLocaleString()} | B: {allTotals.ownTotal.bGrade.toLocaleString()}</div></div>
-              <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'12px', opacity:0.7}}>TOTAL COMMERCIAL METERS</div><div style={{fontSize:'11px', opacity:0.6}}>Commercial Only</div><div style={{fontSize:'24px', fontWeight:800, color:'#fbbf24', marginTop:'6px'}}>{(allTotals.commercialTotal.aGrade + allTotals.commercialTotal.bGrade).toLocaleString()} MTR</div><div style={{fontSize:'11px', opacity:0.7}}>Rolls: {allTotals.commercialTotal.rolls.toLocaleString()} | A: {allTotals.commercialTotal.aGrade.toLocaleString()} | B: {allTotals.commercialTotal.bGrade.toLocaleString()}</div></div>
+            <div className="summary-total-grid" style={{marginTop:'16px', background:'#111827', color:'white', borderRadius:'12px', padding:'20px', display:'grid', gridTemplateColumns:'repeat(3, minmax(0, 1fr))', gap:'12px', textAlign:'center'}}>
+              <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'12px', opacity:0.7}}>TOTAL OWN METERS</div><div style={{fontSize:'11px', opacity:0.6}}>{allTotals.ownSheets.map(s=>s.name).join(' + ') || 'No Own'}</div><div style={{fontSize:'24px', fontWeight:800, color:'#60a5fa', marginTop:'6px'}}>{(allTotals.ownTotal.aGrade + allTotals.ownTotal.bGrade).toLocaleString()} MTR</div><div style={{fontSize:'11px', opacity:0.7}}>Rolls: {allTotals.ownTotal.rolls.toLocaleString()} | A: {allTotals.ownTotal.aGrade.toLocaleString()} | B: {allTotals.ownTotal.bGrade.toLocaleString()}</div></div>
+              <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'12px', opacity:0.7}}>TOTAL COMMERCIAL METERS</div><div style={{fontSize:'11px', opacity:0.6}}>{COMMERCIAL_SHEETS.join(' + ')}</div><div style={{fontSize:'24px', fontWeight:800, color:'#fbbf24', marginTop:'6px'}}>{(allTotals.commercialTotal.aGrade + allTotals.commercialTotal.bGrade).toLocaleString()} MTR</div><div style={{fontSize:'11px', opacity:0.7}}>Rolls: {allTotals.commercialTotal.rolls.toLocaleString()} | A: {allTotals.commercialTotal.aGrade.toLocaleString()} | B: {allTotals.commercialTotal.bGrade.toLocaleString()}</div></div>
               <div><div style={{fontSize:'12px', opacity:0.7}}>GRAND TOTAL</div><div style={{fontSize:'11px', opacity:0.6}}>All 4 Sheets</div><div style={{fontSize:'26px', fontWeight:900, color:'#34d399', marginTop:'6px'}}>{(allTotals.grand.aGrade + allTotals.grand.bGrade).toLocaleString()} MTR</div><div style={{fontSize:'11px', opacity:0.7}}>Rolls: {allTotals.grand.rolls.toLocaleString()} | A: {allTotals.grand.aGrade.toLocaleString()} | B: {allTotals.grand.bGrade.toLocaleString()}</div></div>
             </div>
           </section>
@@ -510,7 +602,7 @@ function App() {
   if (currentView === 'upload') {
     return (
       <main className="app">
-        <header className="topbar"><div className="brand"><div className="brand-icon">U</div><div><h1>Upload Stock</h1><p>Upload new Excel file</p></div></div><NavButtons /><div className="status">{isSaving ? 'Saving...' : workbook ? 'Excel Loaded' : 'Awaiting Excel'}</div></header>
+        <header className="topbar"><div className="brand"><div className="brand-icon">U</div><div><h1>Upload Stock</h1><p>Upload new Excel file</p></div></div><NavButtons /></header>
         {workbook && <div className="stock-updated-till"><strong>Stock Updated Till:</strong> <span>{stockUpdatedTill || 'Date not found'}</span> | Current File: {fileName}</div>}
         <section className="panel" ref={uploadRef} style={{marginTop:'16px'}}>
           {error && <div className="error-message" style={{marginBottom:'16px'}}>{error}</div>}
@@ -527,18 +619,21 @@ function App() {
   }
 
   if (currentView === 'issued') {
-    const ownList = filteredIssued.filter(i => i.sheet !== 'Daily Stock Report (Commercial)')
-    const commList = filteredIssued.filter(i => i.sheet === 'Daily Stock Report (Commercial)')
+    // Include hidden sheet data in commercial
+    const ownList = filteredIssued.filter(i => !COMMERCIAL_SHEETS.includes(i.sheet))
+    const commList = filteredIssued.filter(i => COMMERCIAL_SHEETS.includes(i.sheet))
     const calc = (list) => list.reduce((acc, cur) => ({ rolls: acc.rolls + cur.rolls, meters: acc.meters + cur.totalMeters, aGrade: acc.aGrade + cur.aGrade, bGrade: acc.bGrade + cur.bGrade }), { rolls: 0, meters: 0, aGrade: 0, bGrade: 0 })
     const totalOwn = calc(ownList); 
     const calcComm = calc(commList);
-    // EXACT Commercial total from Excel Row3 - 1,634,710
-    const exactComm = exactTotals && exactTotals['Daily Stock Report (Commercial)'] && exactTotals['Daily Stock Report (Commercial)'].issuance ? exactTotals['Daily Stock Report (Commercial)'].issuance : { rolls: calcComm.rolls, aGrade: calcComm.aGrade, bGrade: calcComm.bGrade, total: calcComm.meters }
-    const totalComm = { rolls: exactComm.rolls || calcComm.rolls, meters: exactComm.total || calcComm.meters, aGrade: exactComm.aGrade, bGrade: exactComm.bGrade }
+    const exactComm = exactTotals && exactTotals['Daily Stock Report (Commercial)'] && exactTotals['Daily Stock Report (Commercial)'].issuance ? exactTotals['Daily Stock Report (Commercial)'].issuance : null
+    let totalComm = calcComm
+    if (exactComm && COMMERCIAL_SHEETS.length === 1) {
+      totalComm = { rolls: exactComm.rolls || calcComm.rolls, meters: exactComm.total || calcComm.meters, aGrade: exactComm.aGrade, bGrade: exactComm.bGrade }
+    }
     const totalIssued = { rolls: totalOwn.rolls + totalComm.rolls, meters: totalOwn.meters + totalComm.meters, aGrade: totalOwn.aGrade + totalComm.aGrade, bGrade: totalOwn.bGrade + totalComm.bGrade }
     return (
       <main className="app">
-        <header className="topbar"><div className="brand"><div className="brand-icon">I</div><div><h1>Issued - TOTAL ISSUANCE TO DATE</h1><p>Commercial Exact: 1,634,710 MTR from Excel</p></div></div><NavButtons /></header>
+        <header className="topbar"><div className="brand"><div className="brand-icon">I</div><div><h1>Issued - TOTAL ISSUANCE</h1><p>Commercial: {COMMERCIAL_SHEETS.join(' + ')}</p></div></div><NavButtons /></header>
         <section className="panel" style={{marginTop:'16px'}}>
           <div style={{display:'flex', gap:'12px', alignItems:'end', flexWrap:'wrap'}}>
             <div className="field"><label>Date Filter (DD-MM-YYYY)</label><input value={issuedDateFilter} onChange={(e) => setIssuedDateFilter(e.target.value)} placeholder="DD-MM-YYYY" /></div>
@@ -546,10 +641,10 @@ function App() {
             <span style={{marginLeft:'auto', fontWeight:700}}>{filteredIssued.length} records | Total: {totalIssued.meters.toLocaleString()} MTR</span>
           </div>
         </section>
-        <div style={{marginTop:'12px', background:'#111827', color:'white', borderRadius:'12px', padding:'18px', display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'12px', textAlign:'center'}}>
-          <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'11px', opacity:0.7}}>TOTAL OWN ISSUED</div><div style={{fontSize:'20px', fontWeight:800, color:'#60a5fa'}}>{totalOwn.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6}}>Own + Free Sale + Free Cost</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalOwn.rolls.toLocaleString()} | A: {totalOwn.aGrade.toLocaleString()} | B: {totalOwn.bGrade.toLocaleString()}</div></div>
-          <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'11px', opacity:0.7}}>TOTAL COMMERCIAL ISSUED - EXACT FROM EXCEL</div><div style={{fontSize:'20px', fontWeight:800, color:'#fbbf24'}}>{totalComm.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6, color:'#4ade80'}}>✓ Exact: {exactComm.total?.toLocaleString() || '1,634,710'} | Expected: 1,634,710</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalComm.rolls.toLocaleString()} | A: {totalComm.aGrade.toLocaleString()} | B: {totalComm.bGrade.toLocaleString()}</div></div>
-          <div><div style={{fontSize:'11px', opacity:0.7}}>GRAND TOTAL ISSUED</div><div style={{fontSize:'22px', fontWeight:900, color:'#f87171'}}>{totalIssued.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6}}>All 4 Sheets</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalIssued.rolls.toLocaleString()} | Records: {filteredIssued.length}</div></div>
+        <div className="transaction-total-cards" style={{marginTop:'12px', background:'#111827', color:'white', borderRadius:'12px', padding:'18px', display:'grid', gridTemplateColumns:'repeat(3, minmax(0, 1fr))', gap:'12px', textAlign:'center'}}>
+          <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'11px', opacity:0.7}}>TOTAL OWN ISSUED</div><div style={{fontSize:'20px', fontWeight:800, color:'#60a5fa'}}>{totalOwn.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6}}>{allTotals?.ownSheets.map(s=>s.name).join(' + ')}</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalOwn.rolls.toLocaleString()} | A: {totalOwn.aGrade.toLocaleString()} | B: {totalOwn.bGrade.toLocaleString()}</div></div>
+          <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'11px', opacity:0.7}}>TOTAL COMMERCIAL ISSUED</div><div style={{fontSize:'20px', fontWeight:800, color:'#fbbf24'}}>{totalComm.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6}}>{COMMERCIAL_SHEETS.join(' + ')}</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalComm.rolls.toLocaleString()} | A: {totalComm.aGrade.toLocaleString()} | B: {totalComm.bGrade.toLocaleString()}</div></div>
+          <div><div style={{fontSize:'11px', opacity:0.7}}>GRAND TOTAL ISSUED</div><div style={{fontSize:'22px', fontWeight:900, color:'#f87171'}}>{totalIssued.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6}}>All Sheets</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalIssued.rolls.toLocaleString()} | Records: {filteredIssued.length}</div></div>
         </div>
         <section className="results-section"><div className="stock-list">{filteredIssued.map((item, idx) => (<article className="stock-card" key={idx} style={{borderLeft:'4px solid #dc2626'}}><div className="stock-date"><span>Date</span><strong>{item.date || '—'}</strong></div><div className="stock-card-title"><div><span className="card-eyebrow">{item.sheet} - {item.serial}</span><h3>{item.quality}</h3></div><span className="width-tag">Width: {item.width}</span></div><div className="record-details"><div className="detail-row item-code-box"><span className="detail-label">Item Code</span><span className="detail-value">{item.itemCode}</span></div><div className="detail-row serial-box"><span className="detail-label">Sr-</span><span className="detail-value">{item.serial}</span></div><div className="detail-row weave-box"><span className="detail-label">Weave, Blend, Selvedge</span><span className="detail-value">{item.weave}</span></div><div className="detail-row supplier-box"><span className="detail-label">Supplier / IGP-GRN</span><span className="detail-value">{item.supplier} / {item.igp}</span></div><div className="detail-row customer-box"><span className="detail-label">Customer / Contract</span><span className="detail-value">{item.customer} / {item.po}</span></div></div><div className="stock-amounts"><div className="amount-box rolls-box"><span className="amount-label">Type / R/B</span><strong className="amount-value">{item.type} / {item.rolls}</strong></div><div className="amount-box a-grade-box" style={{background:'#fef2f2', borderColor:'#fecaca'}}><span className="amount-label">ISSUANCE - A.Grade / B.Grade</span><strong className="amount-value" style={{color:'#dc2626'}}>{item.aGrade} / {item.bGrade}</strong><span className="amount-unit">MTR / MTR - Total: {item.totalMeters}</span></div></div><div className="remarks-box"><span className="remarks-label">Remarks</span><p>{item.remarks}</p></div></article>))}</div></section>
       </main>
@@ -557,13 +652,13 @@ function App() {
   }
 
   if (currentView === 'received') {
-    const ownList = filteredReceived.filter(i => i.sheet !== 'Daily Stock Report (Commercial)')
-    const commList = filteredReceived.filter(i => i.sheet === 'Daily Stock Report (Commercial)')
+    const ownList = filteredReceived.filter(i => !COMMERCIAL_SHEETS.includes(i.sheet))
+    const commList = filteredReceived.filter(i => COMMERCIAL_SHEETS.includes(i.sheet))
     const calc = (list) => list.reduce((acc, cur) => ({ rolls: acc.rolls + cur.rolls, meters: acc.meters + cur.totalMeters, aGrade: acc.aGrade + cur.aGrade, bGrade: acc.bGrade + cur.bGrade }), { rolls: 0, meters: 0, aGrade: 0, bGrade: 0 })
     const totalOwn = calc(ownList); const totalComm = calc(commList); const totalReceived = calc(filteredReceived)
     return (
       <main className="app">
-        <header className="topbar"><div className="brand"><div className="brand-icon">R</div><div><h1>Received - TOTAL RECEIVING TO DATE</h1><p>Dynamic: R/B | A.Grade | B.Grade auto-detect</p></div></div><NavButtons /></header>
+        <header className="topbar"><div className="brand"><div className="brand-icon">R</div><div><h1>Received - TOTAL RECEIVING</h1><p>Commercial: {COMMERCIAL_SHEETS.join(' + ')}</p></div></div><NavButtons /></header>
         <section className="panel" style={{marginTop:'16px'}}>
           <div style={{display:'flex', gap:'12px', alignItems:'end', flexWrap:'wrap'}}>
             <div className="field"><label>Date Filter (DD-MM-YYYY)</label><input value={receivedDateFilter} onChange={(e) => setReceivedDateFilter(e.target.value)} placeholder="DD-MM-YYYY" /></div>
@@ -572,18 +667,18 @@ function App() {
           </div>
         </section>
         <div style={{marginTop:'12px', background:'#111827', color:'white', borderRadius:'12px', padding:'18px', display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'12px', textAlign:'center'}}>
-          <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'11px', opacity:0.7}}>TOTAL OWN RECEIVED</div><div style={{fontSize:'20px', fontWeight:800, color:'#60a5fa'}}>{totalOwn.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6}}>Own + Free Sale + Free Cost</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalOwn.rolls.toLocaleString()} | A: {totalOwn.aGrade.toLocaleString()} | B: {totalOwn.bGrade.toLocaleString()}</div></div>
-          <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'11px', opacity:0.7}}>TOTAL COMMERCIAL RECEIVED</div><div style={{fontSize:'20px', fontWeight:800, color:'#fbbf24'}}>{totalComm.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6}}>Commercial Only</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalComm.rolls.toLocaleString()} | A: {totalComm.aGrade.toLocaleString()} | B: {totalComm.bGrade.toLocaleString()}</div></div>
-          <div><div style={{fontSize:'11px', opacity:0.7}}>GRAND TOTAL RECEIVED</div><div style={{fontSize:'22px', fontWeight:900, color:'#34d399'}}>{totalReceived.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6}}>All 4 Sheets</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalReceived.rolls.toLocaleString()} | Records: {filteredReceived.length}</div></div>
+          <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'11px', opacity:0.7}}>TOTAL OWN RECEIVED</div><div style={{fontSize:'20px', fontWeight:800, color:'#60a5fa'}}>{totalOwn.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6}}>{allTotals?.ownSheets.map(s=>s.name).join(' + ')}</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalOwn.rolls.toLocaleString()} | A: {totalOwn.aGrade.toLocaleString()} | B: {totalOwn.bGrade.toLocaleString()}</div></div>
+          <div style={{borderRight:'1px solid #374151'}}><div style={{fontSize:'11px', opacity:0.7}}>TOTAL COMMERCIAL RECEIVED</div><div style={{fontSize:'20px', fontWeight:800, color:'#fbbf24'}}>{totalComm.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6}}>{COMMERCIAL_SHEETS.join(' + ')}</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalComm.rolls.toLocaleString()} | A: {totalComm.aGrade.toLocaleString()} | B: {totalComm.bGrade.toLocaleString()}</div></div>
+          <div><div style={{fontSize:'11px', opacity:0.7}}>GRAND TOTAL RECEIVED</div><div style={{fontSize:'22px', fontWeight:900, color:'#34d399'}}>{totalReceived.meters.toLocaleString()} MTR</div><div style={{fontSize:'10px', opacity:0.6}}>All Sheets</div><div style={{fontSize:'11px', opacity:0.7, marginTop:'4px'}}>Rolls: {totalReceived.rolls.toLocaleString()} | Records: {filteredReceived.length}</div></div>
         </div>
-        <section className="results-section"><div className="stock-list">{filteredReceived.map((item, idx) => (<article className="stock-card" key={idx} style={{borderLeft:'4px solid #059669'}}><div className="stock-date"><span>Date</span><strong>{item.date || '—'}</strong></div><div className="stock-card-title"><div><span className="card-eyebrow">{item.sheet} - {item.serial}</span><h3>{item.quality}</h3></div><span className="width-tag">Width: {item.width}</span></div><div className="record-details"><div className="detail-row item-code-box"><span className="detail-label">Item Code</span><span className="detail-value">{item.itemCode}</span></div><div className="detail-row serial-box"><span className="detail-label">Sr-</span><span className="detail-value">{item.serial}</span></div><div className="detail-row weave-box"><span className="detail-label">Weave, Blend, Selvedge</span><span className="detail-value">{item.weave}</span></div><div className="detail-row supplier-box"><span className="detail-label">Supplier / IGP-GRN</span><span className="detail-value">{item.supplier} / {item.igp}</span></div><div className="detail-row customer-box"><span className="detail-label">Customer / Contract</span><span className="detail-value">{item.customer} / {item.po}</span></div></div><div className="stock-amounts"><div className="amount-box rolls-box"><span className="amount-label">Type / R/B</span><strong className="amount-value">{item.type} / {item.rolls}</strong></div><div className="amount-box a-grade-box" style={{background:'#ecfdf5', borderColor:'#a7f3d0'}}><span className="amount-label">RECEIVING - A.Grade / B.Grade</span><strong className="amount-value" style={{color:'#059669'}}>{item.aGrade} / {item.bGrade}</strong><span className="amount-unit">MTR / MTR - Total: {item.totalMeters}</span></div></div><div className="remarks-box"><span className="remarks-label">Remarks</span><p>{item.remarks}</p></div></article>))}</div></section>
+        <section className="results-section"><div className="stock-list issued-stock-list">{filteredReceived.map((item, idx) => (<article className="stock-card issued-stock-card" key={idx} style={{borderLeft:'4px solid #059669'}}><div className="stock-date"><span>Date</span><strong>{item.date || '—'}</strong></div><div className="stock-card-title"><div><span className="card-eyebrow">{item.sheet} - {item.serial}</span><h3>{item.quality}</h3></div><span className="width-tag">Width: {item.width}</span></div><div className="record-details"><div className="detail-row item-code-box"><span className="detail-label">Item Code</span><span className="detail-value">{item.itemCode}</span></div><div className="detail-row serial-box"><span className="detail-label">Sr-</span><span className="detail-value">{item.serial}</span></div><div className="detail-row weave-box"><span className="detail-label">Weave, Blend, Selvedge</span><span className="detail-value">{item.weave}</span></div><div className="detail-row supplier-box"><span className="detail-label">Supplier / IGP-GRN</span><span className="detail-value">{item.supplier} / {item.igp}</span></div><div className="detail-row customer-box"><span className="detail-label">Customer / Contract</span><span className="detail-value">{item.customer} / {item.po}</span></div></div><div className="stock-amounts"><div className="amount-box rolls-box"><span className="amount-label">Type / R/B</span><strong className="amount-value">{item.type} / {item.rolls}</strong></div><div className="amount-box a-grade-box" style={{background:'#ecfdf5', borderColor:'#a7f3d0'}}><span className="amount-label">RECEIVING - A.Grade / B.Grade</span><strong className="amount-value" style={{color:'#059669'}}>{item.aGrade} / {item.bGrade}</strong><span className="amount-unit">MTR / MTR - Total: {item.totalMeters}</span></div></div><div className="remarks-box"><span className="remarks-label">Remarks</span><p>{item.remarks}</p></div></article>))}</div></section>
       </main>
     )
   }
 
   return (
     <main className="app">
-      <header className="topbar"><div className="brand"><div className="brand-icon">S</div><div><h1>Stock Search</h1><p>Inventory lookup dashboard</p></div></div><NavButtons /><div className="status">{isSaving ? 'Saving...' : workbook ? 'Excel Loaded' : 'Awaiting Excel'}</div></header>
+      <header className="topbar"><div className="brand"><div className="brand-icon">S</div><div><h1>Available Stock</h1><p>Search and manage your inventory</p></div></div><NavButtons /></header>
       {workbook && <div className="stock-updated-till"><strong>Stock Updated Till:</strong> <span>{stockUpdatedTill || 'Date not found in Row 3'}</span></div>}
       {error && <div className="error-message" style={{marginTop:'12px'}}>{error}</div>}
       <section className="panel" style={{marginTop:'12px'}}>
@@ -609,11 +704,11 @@ function App() {
       <section className="results-section">
         <div className="results-heading"><div><h3>Stock Results</h3><p>{workbook ? `Showing records from ${selectedSheet}` : 'Upload an Excel file to view your stock.'}</p></div><span className="count">{filteredRows.length} records</span></div>
         {!workbook ? <div className="empty-state"><div className="empty-icon">↥</div><h3>Upload your Excel file</h3><p>Go to Upload page</p></div> : filteredRows.length === 0 ? <div className="empty-state"><div className="empty-icon">⌕</div><h3>No matching records</h3><p>Try changing your filters.</p></div> : (
-          <div className="stock-list">
+          <div className="available-stock-list">
             {filteredRows.map((row) => {
               const quality = getColumnCell(row, data.columns.quality), width = getColumnCell(row, data.columns.width), igpNumber = getColumnCell(row, data.columns.igp), contractNumber = getColumnCell(row, data.columns.po), lastReceived = normalizeDate(getColumnCell(row, data.columns.lastReceived))
               return (
-                <article className="stock-card" key={row.id}>
+                <article className="available-stock-card" key={row.id}>
                   <div className="stock-date"><span>Last Received</span><strong>{lastReceived || '—'}</strong></div>
                   <div className="stock-card-title"><div><span className="card-eyebrow">STOCK ITEM</span><h3>{quality === '—' ? 'Quality not available' : quality}</h3></div><span className="width-tag">Width: {width}</span></div>
                   <div className="record-details">
