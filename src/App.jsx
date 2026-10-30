@@ -854,6 +854,76 @@ function App() {
     hideZeroStock,
   ]);
 
+  const qualitySuggestions = useMemo(() => {
+    if (!data.rows.length) return [];
+    const all = [
+      ...new Set(
+        data.rows
+          .map((r) => clean(r.values[data.columns.quality]))
+          .filter(Boolean)
+      ),
+    ];
+    if (!qualityFilter) return all.slice(0, 8);
+    return all
+      .filter((q) => normalize(q).includes(normalize(qualityFilter)))
+      .slice(0, 8);
+  }, [data.rows, data.columns.quality, qualityFilter]);
+
+  const qualityWiseTotal = useMemo(() => {
+    if (!qualityFilter) return null;
+    const matched = data.rows.filter((row) =>
+      normalize(clean(row.values[data.columns.quality])).includes(
+        normalize(qualityFilter)
+      )
+    );
+    if (!matched.length) return null;
+    let rolls = 0,
+      aGrade = 0,
+      bGrade = 0;
+    matched.forEach((row) => {
+      rolls +=
+        Number(clean(row.values[data.stockColumns?.rolls]).replace(/,/g, "")) ||
+        0;
+      aGrade +=
+        Number(
+          clean(row.values[data.stockColumns?.aGrade]).replace(/,/g, "")
+        ) || 0;
+      bGrade +=
+        Number(
+          clean(row.values[data.stockColumns?.bGrade]).replace(/,/g, "")
+        ) || 0;
+    });
+    return {
+      rolls,
+      aGrade,
+      bGrade,
+      total: aGrade + bGrade,
+      count: matched.length,
+    };
+  }, [data.rows, data.columns, data.stockColumns, qualityFilter]);
+
+  const filteredAvailableTotal = useMemo(() => {
+    if (!filteredRows.length)
+      return { total: 0, rolls: 0, aGrade: 0, bGrade: 0 };
+    let rolls = 0,
+      aGrade = 0,
+      bGrade = 0;
+    filteredRows.forEach((row) => {
+      rolls +=
+        Number(clean(row.values[data.stockColumns?.rolls]).replace(/,/g, "")) ||
+        0;
+      aGrade +=
+        Number(
+          clean(row.values[data.stockColumns?.aGrade]).replace(/,/g, "")
+        ) || 0;
+      bGrade +=
+        Number(
+          clean(row.values[data.stockColumns?.bGrade]).replace(/,/g, "")
+        ) || 0;
+    });
+    return { rolls, aGrade, bGrade, total: aGrade + bGrade };
+  }, [filteredRows, data.stockColumns]);
+
   const clearFilters = () => {
     setQualityFilter("");
     setWidthFilter("");
@@ -1943,7 +2013,35 @@ function App() {
               value={qualityFilter}
               onChange={(event) => setQualityFilter(event.target.value)}
               placeholder="Enter quality"
+              list="quality-suggestions"
             />
+            <datalist id="quality-suggestions">
+              {qualitySuggestions.map((q, i) => (
+                <option key={i} value={q} />
+              ))}
+            </datalist>
+            {qualityFilter && qualityWiseTotal && (
+              <div
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  marginTop: "4px",
+                  background: "#f0f7ff",
+                  padding: "6px 8px",
+                  borderRadius: "6px",
+                  border: "1px solid #bfdbfe",
+                  lineHeight: "1.4",
+                }}
+              >
+                <span style={{ color: "#2563eb" }}>
+                  {qualityWiseTotal.count} items
+                </span>{" "}
+                | Total:{" "}
+                <span style={{ color: "#059669" }}>
+                  {qualityWiseTotal.total.toLocaleString()} MTR
+                </span>
+              </div>
+            )}
           </div>
           <div className="field">
             <label htmlFor="width-filter">Width</label>
@@ -2010,6 +2108,21 @@ function App() {
               placeholder="DD-MM-YYYY"
             />
           </div>
+        </div>
+        <div
+          style={{
+            marginTop: "12px",
+            fontWeight: 700,
+            fontSize: "13px",
+            textAlign: "right",
+            background: "#fff",
+            padding: "10px 12px",
+            borderRadius: "8px",
+            border: "1px solid #e5e7eb",
+          }}
+        >
+          {filteredRows.length} records | Total:{" "}
+          {filteredAvailableTotal.total.toLocaleString()} MTR
         </div>
         <div
           style={{
