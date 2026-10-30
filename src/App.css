@@ -2971,4 +2971,63 @@ body {
   .transaction-total-cards > div:last-child {
     border-bottom: none;
   }
+}/* === Issue & Receive Filters - Mobile 2 per row === */
+@media (max-width: 640px) {
+  /* Jo panel Issue aur Receive pages pe hai */
+  .panel div[style*="display: flex"] {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+  }
+
+  .panel div[style*="display: flex"] .field {
+    width: 100% !important;
+  }
+
+  .panel div[style*="display: flex"] .field label {
+    font-size: 11px !important;
+    font-weight: 700 !important;
+  }
+
+  .panel div[style*="display: flex"] .field input {
+    width: 100% !important;
+    padding: 9px 10px !important;
+    font-size: 13px !important;
+    border-radius: 8px !important;
+  }
+
+  .panel div[style*="display: flex"] button {
+    grid-column: span 1;
+    height: 40px !important;
+    padding: 0 12px !important;
+    font-size: 12px !important;
+    border-radius: 8px !important;
+    align-self: end !important;
+  }
+
+  .panel div[style*="display: flex"] span {
+    grid-column: span 2;
+    font-size: 12px !important;
+    text-align: left !important;
+    margin-left: 0 !important;
+  }
+}
+
+/* Desktop pe bhi 2+2 clean rahe */
+@media (min-width: 641px) {
+  .panel div[style*="display: flex"] {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 12px 16px !important;
+    align-items: end !important;
+  }
+  .panel div[style*="display: flex"] button {
+    align-self: end !important;
+    height: 42px !important;
+  }
+  .panel div[style*="display: flex"] span {
+    grid-column: span 2;
+    text-align: right !important;
+    margin-left: 0 !important;
+  }
 }
