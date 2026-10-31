@@ -911,20 +911,20 @@ function App() {
 </head>
 <body>
   <main class="label-page">
-    <h1>FSM3</h1>
-    <h2>${safe(displayQuality)}&nbsp;&nbsp;-&nbsp;&nbsp;${safe(width)}"</h2>
+  <h1 style='color: black; font-weight: 900;'>FSM3</h1>
+
     <hr class="rule" />
-    <section class="rows">
-      <div class="row"><div class="field">Date</div><div class="value">${safe(date)}</div></div>
-      <div class="row"><div class="field">Quality</div><div class="value">${safe(displayQuality)}</div></div>
-      <div class="row"><div class="field">Width</div><div class="value">${safe(width)}"</div></div>
-      <div class="row"><div class="field">Supplier</div><div class="value">${safe(supplier)}</div></div>
-      <div class="row"><div class="field">Customer</div><div class="value">${safe(customer)}</div></div>
-      <div class="row"><div class="field">Quantity</div><div class="value">${safe(quantity)} MTR (${safe(rollsCountDisplay)} ${safe(rollBale)})</div></div>
-      <div class="row"><div class="field">Weave</div><div class="value">${safe(weave)}</div></div>
-      <div class="row"><div class="field">R/B</div><div class="value">${safe(rollBale)} - ${safe(rollsCountDisplay)} ${safe(rollBale === "Rolls" ? (rollsCountNum === 1 ? "Roll" : "Rolls") : rollBale === "Bale" ? (rollsCountNum === 1 ? "Bale" : "Bales") : rollBale)}</div></div>
-      <div class="row"><div class="field">Own/Cmt</div><div class="value">${safe(ownCommercial)}</div></div>
-      <div class="row location"><div class="field">Location</div><div class="value">&nbsp;</div></div>
+    <section class="rowsprint">
+      <div class="row"><div class="field"><h1>Date</h1></div><div class="value"><h1>${safe(date)}</h1></div></div>
+      <div class="row"><div class="field"><h1>Quality</h1></div><div class="value"><h1>${safe(displayQuality)}</h1></div></div>
+      <div class="row"><div class="field"><h1>Width</h1></div><div class="value"><h1>${safe(width)}"</h1></div></div>
+      <div class="row"><div class="field"><h1>Supplier</h1></div><div class="value"><h1>${safe(supplier)}</h1></div></div>
+      <div class="row"><div class="field"><h1>Customer</h1></div><div class="value"><h1>${safe(customer)}</h1></div></div>
+      <div class="row"><div class="field"><h1>Quantity</h1></div><div class="value"><h1>${safe(quantity)} MTR </h1></div></div>
+      <div class="row"><div class="field"><h1>Weave</h1></div><div class="value"><h1>${safe(weave)}</h1></div></div>
+      <div class="row"><div class="field"><h1>R/B</h1></div><div class="value"><h1>${safe(rollsCountDisplay)} ${safe(rollBale)}</h1></div></div>
+      <div class="row"><div class="field"><h1>Own/Cmt</h1></div><div class="value"><h1>${safe(ownCommercial)}</h1></div></div>
+      <div class="row location"><div class="field"><h1>Location</h1></div><div class="value">&nbsp;</div></div>
     </section>
   </main>
   <script>
