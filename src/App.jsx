@@ -429,6 +429,17 @@ function App() {
   const [customerFilter, setCustomerFilter] = useState("");
   const [serialFilter, setSerialFilter] = useState("");
   const [lastReceivedFilter, setLastReceivedFilter] = useState("");
+  const [appliedFilters, setAppliedFilters] = useState({
+    quality: "",
+    width: "",
+    igp: "",
+    po: "",
+    supplier: "",
+    customer: "",
+    serial: "",
+    lastReceived: "",
+  });
+  const [visibleCount, setVisibleCount] = useState(50);
   const [error, setError] = useState("");
   const [hideZeroStock, setHideZeroStock] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -799,6 +810,128 @@ function App() {
     return value || "0";
   };
 
+  // Print only the requested fields for one Available Stock card.
+    const handlePrintLabel = (row) => {
+    const popup = window.open("", "_blank", "width=900,height=1100");
+    if (!popup) {
+      alert("Please allow pop-ups to print the label.");
+      return;
+    }
+
+    const date = normalizeDate(getColumnCell(row, data.columns.lastReceived));
+    const aGrade = Number(
+      getStockCell(row, data.stockColumns?.aGrade).replace(/,/g, "")
+    ) || 0;
+    const bGrade = Number(
+      getStockCell(row, data.stockColumns?.bGrade).replace(/,/g, "")
+    ) || 0;
+    const quantity = (aGrade + bGrade).toLocaleString();
+    const width = getColumnCell(row, data.columns.width);
+    // Supplier & Customer - Fixed based on debug: index 7 and 9
+    const supplier = (() => {
+      for (let i = 0; i < data.headers.length; i++) {
+        if (normalize(data.headers[i]) === "greige supplier") {
+          const v = clean(row.values[i]);
+          if (v) return v;
+        }
+      }
+      return getColumnCell(row, data.columns.supplier);
+    })();
+    const customer = (() => {
+      // Prefer full name from short name column
+      for (let i = 0; i < data.headers.length; i++) {
+        const h = normalize(data.headers[i]);
+        if (h.includes("processing customer short name") || h === "processing customer short name") {
+          const v = clean(row.values[i]);
+          if (v) return v;
+        }
+      }
+      for (let i = 0; i < data.headers.length; i++) {
+        const h = normalize(data.headers[i]);
+        if (h.includes("processing customer")) {
+          const v = clean(row.values[i]);
+          if (v && v !== "GT" && v.length > 2) return v;
+        }
+      }
+      // If only GT like short code, use short name column
+      let v = getColumnCell(row, data.columns.customer);
+      const shortNameIdx = data.headers.findIndex(h => normalize(h).includes("short name"));
+      if (shortNameIdx >= 0) {
+        const shortVal = clean(row.values[shortNameIdx]);
+        if (shortVal) return shortVal;
+      }
+      return v;
+    })();
+    const weave = getColumnCell(row, data.columns.weaveBlendSelvedge);
+    const qualityValue = getColumnCell(row, data.columns.quality);
+    const rawType = getColumnCell(row, data.columns.type);
+    const normalizedType = normalize(rawType);
+    let rollBale = rawType;
+    if (/roll/.test(normalizedType)) rollBale = "Rolls";
+    else if (/bale/.test(normalizedType)) rollBale = "Bale";
+    else if (/^th\b|thaan|than/.test(normalizedType)) rollBale = "TH";
+
+    const ownCommercial = COMMERCIAL_SHEETS.includes(selectedSheet) ? "Commercial" : "Own";
+
+    const safe = (value) =>
+      String(value ?? "—").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[char]));
+
+    const displayQuality = qualityValue && qualityValue !== "—" ? qualityValue : "FSM 3";
+
+    popup.document.open();
+    popup.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${safe(displayQuality)} Label</title>
+  <style>
+    @page { size: A4 portrait; margin: 18mm; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+    body { font-family: Arial, Helvetica, sans-serif; }
+    .label-page { width: 100%; min-height: 260mm; color: #000; background: #fff; }
+    h1 { margin: 0 0 12mm; text-align: center; font-size: 34pt; font-weight: 800; }
+    .rule { border: 0; border-top: 2px solid #000; margin: 0 0 12mm; }
+    .rows { width: 100%; }
+    .row { display: grid; grid-template-columns: 42% 58%; min-height: 19mm;
+           align-items: center; border-bottom: 1px solid #000;
+           font-size: 20pt; line-height: 1.25; }
+    .field { font-weight: 700; padding: 3mm 2mm 3mm 0; }
+    .value { padding: 3mm 0 3mm 4mm; overflow-wrap: anywhere; }
+    .location .value { min-height: 19mm; }
+    @media screen { body { padding: 18mm; } }
+  </style>
+</head>
+<body>
+  <main class="label-page">
+    <h1>${safe(displayQuality)}&nbsp;&nbsp;-&nbsp;&nbsp;${safe(width)}"</h1>
+    <hr class="rule" />
+    <section class="rows">
+      <div class="row"><div class="field">Date</div><div class="value">${safe(date)}</div></div>
+      <div class="row"><div class="field">Quality</div><div class="value">${safe(displayQuality)}</div></div>
+      <div class="row"><div class="field">Width</div><div class="value">${safe(width)}</div></div>
+      <div class="row"><div class="field">Supplier</div><div class="value">${safe(supplier)}</div></div>
+      <div class="row"><div class="field">Customer</div><div class="value">${safe(customer)}</div></div>
+      <div class="row"><div class="field">Quantity</div><div class="value">${safe(quantity)} MTR</div></div>
+      <div class="row"><div class="field">Weave</div><div class="value">${safe(weave)}</div></div>
+      <div class="row"><div class="field">R/B</div><div class="value">${safe(rollBale)}</div></div>
+      <div class="row"><div class="field">Own/Cmt</div><div class="value">${safe(ownCommercial)}</div></div>
+      <div class="row location"><div class="field">Location</div><div class="value">&nbsp;</div></div>
+    </section>
+  </main>
+  <script>
+    window.onload = () => {
+      window.focus();
+      window.print();
+    };
+  </script>
+</body>
+</html>`);
+    popup.document.close();
+  };
+
   const filteredRows = useMemo(() => {
     return data.rows.filter((row) => {
       const valueAt = (column) =>
@@ -830,29 +963,26 @@ function App() {
         hasStock = rolls !== 0 || meters !== 0;
       return (
         (!hideZeroStock || hasStock) &&
-        (!qualityFilter || quality.includes(normalize(qualityFilter))) &&
-        (!widthFilter || width.includes(normalize(widthFilter))) &&
-        (!igpFilter || igp.includes(normalize(igpFilter))) &&
-        (!poFilter || po.includes(normalize(poFilter))) &&
-        (!supplierFilter || supplier.includes(normalize(supplierFilter))) &&
-        (!customerFilter || customer.includes(normalize(customerFilter))) &&
-        (!serialFilter || serial.includes(normalize(serialFilter))) &&
-        (!lastReceivedFilter ||
+        (!appliedFilters.quality || quality.includes(normalize(appliedFilters.quality))) &&
+        (!appliedFilters.width || width.includes(normalize(appliedFilters.width))) &&
+        (!appliedFilters.igp || igp.includes(normalize(appliedFilters.igp))) &&
+        (!appliedFilters.po || po.includes(normalize(appliedFilters.po))) &&
+        (!appliedFilters.supplier || supplier.includes(normalize(appliedFilters.supplier))) &&
+        (!appliedFilters.customer || customer.includes(normalize(appliedFilters.customer))) &&
+        (!appliedFilters.serial || serial.includes(normalize(appliedFilters.serial))) &&
+        (!appliedFilters.lastReceived ||
           normalize(lastReceived) === normalize(requestedDate))
       );
     });
   }, [
     data,
-    qualityFilter,
-    widthFilter,
-    igpFilter,
-    poFilter,
-    supplierFilter,
-    customerFilter,
-    serialFilter,
-    lastReceivedFilter,
+    appliedFilters,
     hideZeroStock,
   ]);
+
+  const visibleRows = useMemo(() => {
+    return filteredRows.slice(0, visibleCount);
+  }, [filteredRows, visibleCount]);
 
   const qualitySuggestions = useMemo(() => {
     if (!data.rows.length) return [];
@@ -863,14 +993,14 @@ function App() {
           .filter(Boolean)
       ),
     ];
-    if (!qualityFilter) return all.slice(0, 8);
+    if (!appliedFilters.quality) return all.slice(0, 8);
     return all
       .filter((q) => normalize(q).includes(normalize(qualityFilter)))
       .slice(0, 8);
   }, [data.rows, data.columns.quality, qualityFilter]);
 
   const qualityWiseTotal = useMemo(() => {
-    if (!qualityFilter) return null;
+    if (!appliedFilters.quality) return null;
     const matched = data.rows.filter((row) =>
       normalize(clean(row.values[data.columns.quality])).includes(
         normalize(qualityFilter)
@@ -900,7 +1030,7 @@ function App() {
       total: aGrade + bGrade,
       count: matched.length,
     };
-  }, [data.rows, data.columns, data.stockColumns, qualityFilter]);
+  }, [data.rows, data.columns, data.stockColumns, appliedFilters.quality]);
 
   const filteredAvailableTotal = useMemo(() => {
     if (!filteredRows.length)
@@ -933,6 +1063,31 @@ function App() {
     setCustomerFilter("");
     setSerialFilter("");
     setLastReceivedFilter("");
+    setAppliedFilters({
+      quality: "",
+      width: "",
+      igp: "",
+      po: "",
+      supplier: "",
+      customer: "",
+      serial: "",
+      lastReceived: "",
+    });
+    setVisibleCount(50);
+  };
+
+  const handleSearch = () => {
+    setAppliedFilters({
+      quality: qualityFilter,
+      width: widthFilter,
+      igp: igpFilter,
+      po: poFilter,
+      supplier: supplierFilter,
+      customer: customerFilter,
+      serial: serialFilter,
+      lastReceived: lastReceivedFilter,
+    });
+    setVisibleCount(50);
   };
 
   const NavButtons = () => (
@@ -2001,9 +2156,28 @@ function App() {
             <h3>Search Filters</h3>
             <p>Enter one or more values to narrow down the results.</p>
           </div>
-          <button className="clear-button" onClick={clearFilters} type="button">
-            Clear filters
-          </button>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <button className="clear-button" onClick={clearFilters} type="button" style={{ background: "#ef4444", color: "#fff", border: "none", padding: "8px 14px", borderRadius: "8px", fontWeight: 700, fontSize: "13px", cursor: "pointer" }}>
+              Clear filters
+            </button>
+            <button
+              onClick={handleSearch}
+              type="button"
+              className="clear-button"
+              style={{
+                background: "#16a34a",
+                color: "#fff",
+                border: "none",
+                padding: "8px 14px",
+                borderRadius: "8px",
+                fontWeight: 700,
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
+            >
+              ⌕ Search
+            </button>
+          </div>
         </div>
         <div className="filters">
           <div className="field">
@@ -2111,39 +2285,36 @@ function App() {
         </div>
         <div
           style={{
-            marginTop: "12px",
-            fontWeight: 700,
-            fontSize: "13px",
-            textAlign: "right",
-            background: "#fff",
-            padding: "10px 12px",
-            borderRadius: "8px",
-            border: "1px solid #e5e7eb",
-          }}
-        >
-          {filteredRows.length} records | Total:{" "}
-          {filteredAvailableTotal.total.toLocaleString()} MTR
-        </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
             marginTop: "16px",
-            fontSize: "13px",
-            fontWeight: 700,
+            display: "flex",
+            gap: "12px",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "#f8fafc",
+            padding: "12px 14px",
+            borderRadius: "10px",
+            border: "1px solid #e2e8f0",
           }}
         >
-          <input
-            id="hide-zero-stock"
-            type="checkbox"
-            checked={hideZeroStock}
-            onChange={(event) => setHideZeroStock(event.target.checked)}
-            style={{ width: "16px", height: "16px", cursor: "pointer" }}
-          />
-          <label htmlFor="hide-zero-stock" style={{ cursor: "pointer" }}>
-            Hide Zero Stock
-          </label>
+          <div style={{ display: "flex", gap: "16px", alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 700, fontSize: "13px" }}>
+              {filteredRows.length} records | Total: {filteredAvailableTotal.total.toLocaleString()} MTR
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: 700 }}>
+              <input
+                id="hide-zero-stock"
+                type="checkbox"
+                checked={hideZeroStock}
+                onChange={(event) => setHideZeroStock(event.target.checked)}
+                style={{ width: "16px", height: "16px", cursor: "pointer" }}
+              />
+              <label htmlFor="hide-zero-stock" style={{ cursor: "pointer" }}>
+                Hide Zero Stock
+              </label>
+            </div>
+          </div>
+  
         </div>
       </section>
       <section className="results-section">
@@ -2171,8 +2342,9 @@ function App() {
             <p>Try changing your filters.</p>
           </div>
         ) : (
-          <div className="available-stock-list">
-            {filteredRows.map((row) => {
+          <>
+            <div className="available-stock-list">
+            {visibleRows.map((row) => {
               const quality = getColumnCell(row, data.columns.quality),
                 width = getColumnCell(row, data.columns.width),
                 igpNumber = getColumnCell(row, data.columns.igp),
@@ -2202,11 +2374,32 @@ function App() {
                         {getColumnCell(row, data.columns.itemCode)}
                       </span>
                     </div>
-                    <div className="detail-row serial-box">
-                      <span className="detail-label">Sr-</span>
-                      <span className="detail-value">
-                        {getColumnCell(row, data.columns.serial)}
-                      </span>
+                    <div className="detail-row serial-box" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <span className="detail-label">Sr-</span>
+                        <span className="detail-value" style={{ marginLeft: "8px" }}>
+                          {getColumnCell(row, data.columns.serial)}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handlePrintLabel(row)}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          padding: "5px 10px",
+                          border: "1px solid #2563eb",
+                          borderRadius: "6px",
+                          background: "#eff6ff",
+                          color: "#2563eb",
+                          fontSize: "11px",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        🏷️ Label ↓
+                      </button>
                     </div>
                     <div className="detail-row weave-box">
                       <span className="detail-label">
@@ -2252,10 +2445,34 @@ function App() {
                     <span className="remarks-label">Remarks</span>
                     <p>{getCell(row, [/^remarks?$/i, /remarks?/i])}</p>
                   </div>
+                  
                 </article>
               );
             })}
           </div>
+            {visibleCount < filteredRows.length && (
+              <div style={{ textAlign: "center", marginTop: "24px", paddingBottom: "10px" }}>
+                <button
+                  onClick={() => setVisibleCount((c) => c + 50)}
+                  style={{
+                    padding: "14px 32px",
+                    background: "#111827",
+                    color: "#fff",
+                    border: "2px solid #111827",
+                    borderRadius: "12px",
+                    fontWeight: 900,
+                    fontSize: "15px",
+                    cursor: "pointer",
+                    boxShadow: "0 6px 16px rgba(0,0,0,0.2)",
+                    width: "100%",
+                    maxWidth: "420px",
+                  }}
+                >
+                  ↓ Load More ({filteredRows.length - visibleCount} remaining) — {visibleCount} / {filteredRows.length}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </section>
       <footer>Stock Search Dashboard</footer>
