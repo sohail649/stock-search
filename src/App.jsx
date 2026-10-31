@@ -880,6 +880,10 @@ function App() {
 
     const displayQuality = qualityValue && qualityValue !== "—" ? qualityValue : "FSM 3";
 
+    const rollsCountRaw = getStockCell(row, data.stockColumns?.rolls);
+    const rollsCountNum = Number(String(rollsCountRaw).replace(/,/g, "")) || 0;
+    const rollsCountDisplay = rollsCountRaw && rollsCountRaw !== "—" ? rollsCountRaw : (rollsCountNum ? String(rollsCountNum) : "—");
+
     popup.document.open();
     popup.document.write(`<!doctype html>
 <html>
@@ -887,36 +891,38 @@ function App() {
   <meta charset="utf-8" />
   <title>${safe(displayQuality)} Label</title>
   <style>
-    @page { size: A4 portrait; margin: 18mm; }
+    @page { size: A4 portrait; margin: 14mm 18mm; }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; background: #fff; color: #000; }
     body { font-family: Arial, Helvetica, sans-serif; }
     .label-page { width: 100%; min-height: 260mm; color: #000; background: #fff; }
-    h1 { margin: 0 0 12mm; text-align: center; font-size: 34pt; font-weight: 800; }
-    .rule { border: 0; border-top: 2px solid #000; margin: 0 0 12mm; }
+    h1 { margin: 0 0 2mm; text-align: center; font-size: 22pt; font-weight: 800; letter-spacing: 0.5px; }
+    h2 { margin: 0 0 8mm; text-align: center; font-size: 18pt; font-weight: 700; color: #111; }
+    .rule { border: 0; border-top: 2px solid #000; margin: 0 0 10mm; }
     .rows { width: 100%; }
-    .row { display: grid; grid-template-columns: 42% 58%; min-height: 19mm;
+    .row { display: grid; grid-template-columns: 42% 58%; min-height: 17mm;
            align-items: center; border-bottom: 1px solid #000;
-           font-size: 20pt; line-height: 1.25; }
-    .field { font-weight: 700; padding: 3mm 2mm 3mm 0; }
-    .value { padding: 3mm 0 3mm 4mm; overflow-wrap: anywhere; }
-    .location .value { min-height: 19mm; }
-    @media screen { body { padding: 18mm; } }
+           font-size: 18pt; line-height: 1.25; }
+    .field { font-weight: 700; padding: 2.5mm 2mm 2.5mm 0; }
+    .value { padding: 2.5mm 0 2.5mm 4mm; overflow-wrap: anywhere; }
+    .location .value { min-height: 17mm; }
+    @media screen { body { padding: 14mm 18mm; } }
   </style>
 </head>
 <body>
   <main class="label-page">
-    <h1>${safe(displayQuality)}&nbsp;&nbsp;-&nbsp;&nbsp;${safe(width)}"</h1>
+    <h1>FSM3</h1>
+    <h2>${safe(displayQuality)}&nbsp;&nbsp;-&nbsp;&nbsp;${safe(width)}"</h2>
     <hr class="rule" />
     <section class="rows">
       <div class="row"><div class="field">Date</div><div class="value">${safe(date)}</div></div>
       <div class="row"><div class="field">Quality</div><div class="value">${safe(displayQuality)}</div></div>
-      <div class="row"><div class="field">Width</div><div class="value">${safe(width)}</div></div>
+      <div class="row"><div class="field">Width</div><div class="value">${safe(width)}"</div></div>
       <div class="row"><div class="field">Supplier</div><div class="value">${safe(supplier)}</div></div>
       <div class="row"><div class="field">Customer</div><div class="value">${safe(customer)}</div></div>
-      <div class="row"><div class="field">Quantity</div><div class="value">${safe(quantity)} MTR</div></div>
+      <div class="row"><div class="field">Quantity</div><div class="value">${safe(quantity)} MTR (${safe(rollsCountDisplay)} ${safe(rollBale)})</div></div>
       <div class="row"><div class="field">Weave</div><div class="value">${safe(weave)}</div></div>
-      <div class="row"><div class="field">R/B</div><div class="value">${safe(rollBale)}</div></div>
+      <div class="row"><div class="field">R/B</div><div class="value">${safe(rollBale)} - ${safe(rollsCountDisplay)} ${safe(rollBale === "Rolls" ? (rollsCountNum === 1 ? "Roll" : "Rolls") : rollBale === "Bale" ? (rollsCountNum === 1 ? "Bale" : "Bales") : rollBale)}</div></div>
       <div class="row"><div class="field">Own/Cmt</div><div class="value">${safe(ownCommercial)}</div></div>
       <div class="row location"><div class="field">Location</div><div class="value">&nbsp;</div></div>
     </section>
