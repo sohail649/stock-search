@@ -416,6 +416,145 @@ const getTransactions = (workbook, type) => {
   return allData;
 };
 
+
+function ReconciliationPage({ onHome }) {
+  const [issuanceFile, setIssuanceFile] = useState(null);
+  const [erpFile, setErpFile] = useState(null);
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState("");
+
+  const cleanRecon = (v) => String(v ?? "").replace(/\s+/g, " ").trim();
+  const keyRecon = (v) => cleanRecon(v).toLowerCase();
+  const codeRecon = (v) => cleanRecon(v).replace(/(?:\.0000)+$/i, "").toLowerCase();
+  const qtyRecon = (v) => {
+    const n = Number(cleanRecon(v).replace(/,/g, ""));
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const parseFile = async (file, type) => {
+    const bytes = await file.arrayBuffer();
+    const wb = XLSX.read(bytes, { type: "array", cellDates: true });
+    const rows = [];
+    wb.SheetNames.forEach((name) => {
+      const matrix = XLSX.utils.sheet_to_json(wb.Sheets[name], {
+        header: 1, defval: "", raw: false,
+      });
+      const findHeader = (aliases) => matrix.findIndex((row) =>
+        aliases.every((a) => row.some((cell) => keyRecon(cell) === keyRecon(a)))
+      );
+      const headerIndex = type === "issuance"
+        ? findHeader(["ERP Lot #", "ITEM CODE", "Issue Qty"])
+        : findHeader(["Batching Lot", "Item Code", "QTY"]);
+      if (headerIndex < 0) return;
+      const headers = matrix[headerIndex].map(cleanRecon);
+      const col = (aliases) => headers.findIndex((h) => aliases.some((a) => keyRecon(h) === keyRecon(a)));
+      const lotCol = col(type === "issuance" ? ["ERP Lot #"] : ["Batching Lot"]);
+      const itemCol = col(["ITEM CODE", "Item Code"]);
+      const qtyCol = col(type === "issuance" ? ["Issue Qty"] : ["QTY"]);
+      matrix.slice(headerIndex + 1).forEach((row) => {
+        const lot = cleanRecon(row[lotCol]);
+        if (!lot) return;
+        rows.push({
+          lot: lot.toLowerCase(),
+          lotLabel: lot,
+          item: codeRecon(row[itemCol]),
+          qty: qtyRecon(row[qtyCol]),
+        });
+      });
+    });
+    if (!rows.length) throw new Error(type === "issuance"
+      ? 'Issuance Excel mein "ERP Lot #", "ITEM CODE", "Issue Qty" headers nahi mile.'
+      : 'ERP Excel mein "Batching Lot", "Item Code", "QTY" headers nahi mile.');
+    return rows;
+  };
+
+  const compareFiles = async () => {
+    if (!issuanceFile || !erpFile) {
+      setError("Dono Excel files select karein.");
+      return;
+    }
+    try {
+      setError("");
+      const [issued, erp] = await Promise.all([
+        parseFile(issuanceFile, "issuance"),
+        parseFile(erpFile, "erp"),
+      ]);
+      const aggregate = (rows) => {
+        const map = new Map();
+        rows.forEach((r) => {
+          const item = map.get(r.lot) || { lot: r.lotLabel, qty: 0, items: new Set() };
+          item.qty += r.qty;
+          if (r.item) item.items.add(r.item);
+          map.set(r.lot, item);
+        });
+        return map;
+      };
+      const a = aggregate(issued), b = aggregate(erp);
+      const allLots = new Set([...a.keys(), ...b.keys()]);
+      const compared = [...allLots].map((lot) => {
+        const x = a.get(lot), y = b.get(lot);
+        const issuanceItems = x ? [...x.items] : [];
+        const erpItems = y ? [...y.items] : [];
+        const itemMismatch = Boolean(x && y && issuanceItems.length && erpItems.length &&
+          !issuanceItems.some((item) => erpItems.includes(item)));
+        return {
+          lot: (x || y).lot,
+          issuanceQty: x?.qty ?? null,
+          erpQty: y?.qty ?? null,
+          difference: x && y ? x.qty - y.qty : null,
+          issuanceItem: issuanceItems.join(", "),
+          erpItem: erpItems.join(", "),
+          status: !x ? "Missing in Issuance" : !y ? "Missing in ERP" :
+            itemMismatch ? "Item Code Mismatch" :
+            Math.abs(x.qty - y.qty) > 0.0001 ? "Qty Difference" : "Matched",
+        };
+      });
+      setResults(compared);
+    } catch (e) {
+      setError(e.message || "Excel files read nahi ho sakin.");
+      setResults(null);
+    }
+  };
+
+  const count = (status) => results?.filter((r) => r.status === status).length || 0;
+  return (
+    <main className="app">
+      <header className="topbar">
+        <div className="brand"><div className="brand-icon">⇄</div><div><h1>Reconciliation</h1><p>Issuance vs ERP Sub Inventory</p></div></div>
+        <button className="nav-home" onClick={onHome} type="button">⌂ Home</button>
+      </header>
+      <section style={{ padding: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 14 }}>
+          <label style={{ display: "grid", gap: 8, fontWeight: 700 }}>Issuance Excel
+            <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setIssuanceFile(e.target.files?.[0] || null)} />
+          </label>
+          <label style={{ display: "grid", gap: 8, fontWeight: 700 }}>ERP Sub Inventory Excel
+            <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setErpFile(e.target.files?.[0] || null)} />
+          </label>
+        </div>
+        <button type="button" onClick={compareFiles} style={{ marginTop: 16, padding: "10px 18px", borderRadius: 8, border: 0, background: "#1d4ed8", color: "#fff", fontWeight: 700, cursor: "pointer" }}>Compare Excel Files</button>
+        {error && <p style={{ color: "#b91c1c", fontWeight: 700 }}>{error}</p>}
+        {results && <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, margin: "18px 0" }}>
+            {["Matched", "Qty Difference", "Item Code Mismatch", "Missing in Issuance", "Missing in ERP"].map((s) =>
+              <div key={s} style={{ padding: 12, borderRadius: 8, background: "#f1f5f9" }}><strong>{count(s)}</strong><div>{s}</div></div>
+            )}
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+              <thead><tr>{["ERP Lot # / Batching Lot","Issuance Item Code","ERP Item Code","Issuance Qty","ERP Qty","Difference","Status"].map((h) => <th key={h} style={{ textAlign: "left", padding: 9, background: "#e2e8f0", borderBottom: "1px solid #cbd5e1" }}>{h}</th>)}</tr></thead>
+              <tbody>{results.map((r) => <tr key={r.lot}>
+                {[r.lot,r.issuanceItem || "—",r.erpItem || "—",r.issuanceQty ?? "—",r.erpQty ?? "—",r.difference === null ? "—" : r.difference,r.status].map((v,i) => <td key={i} style={{ padding: 9, borderBottom: "1px solid #e2e8f0" }}>{v}</td>)}
+              </tr>)}</tbody>
+            </table>
+          </div>
+        </>}
+      </section>
+    </main>
+  );
+}
+
+
 function App() {
   const [workbook, setWorkbook] = useState(null);
   const [fileName, setFileName] = useState("");
@@ -1145,6 +1284,13 @@ function App() {
       >
         Stock Summary
       </button>
+      <button
+        className={`nav-summary ${currentView === "reconciliation" ? "is-active" : ""}`}
+        onClick={() => setCurrentView("reconciliation")}
+        type="button"
+      >
+        Reconciliation
+      </button>
       <button className="nav-upload" onClick={handleShowUpload} type="button">
         ↑ Upload Stock
       </button>
@@ -1160,6 +1306,10 @@ function App() {
         </div>
       </main>
     );
+
+  if (currentView === "reconciliation") {
+    return <ReconciliationPage onHome={() => setCurrentView("home")} />;
+  }
 
   if (currentView === "home") {
     const grandMeters = allTotals
@@ -1263,6 +1413,17 @@ function App() {
                 Overview and reports - Commercial ={" "}
                 {COMMERCIAL_SHEETS.join(" + ")}
               </span>
+              <span className="card-shine"></span>
+            </button>
+            <button
+              className="workspace-card card-summary"
+              onClick={() => setCurrentView("reconciliation")}
+              type="button"
+            >
+              <span className="workspace-icon">⇄</span>
+              <span className="workspace-arrow">↗</span>
+              <span className="workspace-title">Reconciliation</span>
+              <span className="workspace-subtitle">Compare Issuance and ERP Excel</span>
               <span className="card-shine"></span>
             </button>
           </div>

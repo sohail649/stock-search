@@ -1,0 +1,611 @@
+
+.recon-page {
+  width: 100%;
+  max-width: 100%;
+  padding: 20px;
+  color: #1e293b;
+  background: #f8fafc;
+  border-radius: 14px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.recon-page * {
+  box-sizing: border-box;
+}
+
+.recon-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.recon-header h1 {
+  margin: 0 0 6px;
+  font-size: 26px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.recon-header p {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.recon-upload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.recon-upload-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 18px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.04);
+}
+
+.recon-upload-card label {
+  font-size: 15px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.recon-upload-card input {
+  width: 100%;
+  max-width: 100%;
+  font-size: 13px;
+}
+
+.recon-file-name {
+  font-size: 12px;
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
+.recon-run-button {
+  width: 100%;
+  padding: 13px 18px;
+  border: none;
+  border-radius: 9px;
+  background: #1d4ed8;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.recon-run-button:hover {
+  background: #1e40af;
+}
+
+.recon-run-button:active {
+  transform: scale(0.99);
+}
+
+.recon-run-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.recon-error {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.recon-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.recon-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 18px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 3px 9px rgba(15, 23, 42, 0.04);
+}
+
+.recon-summary-card span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.recon-summary-card strong {
+  font-size: 25px;
+  color: #0f172a;
+}
+
+.recon-green {
+  color: #15803d !important;
+}
+
+.recon-red {
+  color: #dc2626 !important;
+}
+
+.recon-total-box {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+  padding: 18px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+}
+
+.recon-total-box > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.recon-total-box span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.recon-total-box strong {
+  font-size: 17px;
+  color: #1e40af;
+  overflow-wrap: anywhere;
+}
+
+.recon-results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin: 26px 0 14px;
+}
+
+.recon-results-header h2 {
+  margin: 0;
+  font-size: 19px;
+  color: #0f172a;
+}
+
+.recon-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #475569;
+  cursor: pointer;
+}
+
+.recon-filter input {
+  accent-color: #2563eb;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.recon-table-wrapper {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.recon-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.recon-table th {
+  padding: 14px 12px;
+  text-align: left;
+  background: #eaf1fb;
+  color: #334155;
+  font-weight: 700;
+  border-bottom: 1px solid #dbe4f0;
+}
+
+.recon-table td {
+  padding: 13px 12px;
+  border-bottom: 1px solid #edf2f7;
+  color: #334155;
+}
+
+.recon-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.recon-cell-error {
+  color: #dc2626 !important;
+  font-weight: 700;
+}
+
+.recon-cell-success {
+  color: #15803d !important;
+  font-weight: 600;
+}
+
+.recon-badge {
+  display: inline-block;
+  padding: 5px 9px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.recon-badge-green {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.recon-badge-red {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.recon-code-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.recon-code-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px;
+  background: #fff7ed;
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: normal;
+}
+
+.recon-code-row strong {
+  color: #9a3412;
+  overflow-wrap: anywhere;
+}
+
+.recon-status-detail {
+  margin-top: 5px;
+  color: #b91c1c;
+  font-size: 11px;
+}
+
+.recon-empty {
+  padding: 28px !important;
+  text-align: center;
+  color: #15803d !important;
+  font-weight: 600;
+}
+
+.recon-sheet-info {
+  margin-top: 14px;
+  font-size: 12px;
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
+/* Desktop par mobile cards hide */
+.recon-mobile-cards {
+  display: none !important;
+}
+
+/* Tablet and Mobile */
+@media (max-width: 700px) {
+  .recon-page {
+    width: 100%;
+    max-width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    overflow-x: hidden;
+  }
+
+  .recon-header {
+    margin-bottom: 18px;
+  }
+
+  .recon-header h1 {
+    font-size: 22px;
+  }
+
+  .recon-header p {
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .recon-upload-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .recon-upload-card {
+    padding: 14px;
+    gap: 10px;
+  }
+
+  .recon-run-button {
+    padding: 12px;
+    font-size: 14px;
+  }
+
+  .recon-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+    margin-top: 18px;
+  }
+
+  .recon-summary-card {
+    padding: 11px 8px;
+    gap: 8px;
+    border-radius: 9px;
+  }
+
+  .recon-summary-card span {
+    font-size: 10px;
+  }
+
+  .recon-summary-card strong {
+    font-size: 19px;
+  }
+
+  .recon-total-box {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .recon-total-box > div {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .recon-total-box span {
+    font-size: 12px;
+  }
+
+  .recon-total-box strong {
+    font-size: 14px;
+    text-align: right;
+  }
+
+  .recon-results-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin: 22px 0 14px;
+  }
+
+  .recon-results-header h2 {
+    font-size: 18px;
+  }
+
+  /* Mobile par desktop table hide */
+  .recon-table-wrapper {
+    display: none !important;
+  }
+
+  /* Mobile par individual cards show */
+  .recon-mobile-cards {
+    display: flex !important;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    gap: 13px;
+  }
+
+  .recon-mobile-card {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    padding: 15px;
+    background: #fff;
+    border: 1px solid #dbe4f0;
+    border-radius: 12px;
+    box-shadow: 0 3px 10px rgba(15, 23, 42, 0.06);
+    overflow: hidden;
+  }
+
+  .recon-mobile-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+    padding-bottom: 13px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .recon-mobile-card-header > div {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .recon-mobile-label {
+    display: block;
+    color: #64748b;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+  }
+
+  .recon-mobile-lot {
+    color: #1e3a8a;
+    font-size: 16px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .recon-mobile-quantities {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 14px 0;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .recon-mobile-quantities > div {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .recon-mobile-quantities span {
+    color: #64748b;
+    font-size: 11px;
+  }
+
+  .recon-mobile-quantities strong {
+    color: #0f172a;
+    font-size: 15px;
+    overflow-wrap: anywhere;
+  }
+
+  .recon-mobile-difference {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .recon-mobile-difference span {
+    color: #475569;
+    font-size: 12px;
+  }
+
+  .recon-mobile-difference strong {
+    font-size: 14px;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+
+  .recon-mobile-code {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding-top: 13px;
+    min-width: 0;
+  }
+
+  .recon-mobile-code-row {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    gap: 5px;
+    padding: 10px;
+    background: #fff7ed;
+    border-radius: 8px;
+    font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+
+  .recon-mobile-code-row strong {
+    color: #9a3412;
+    word-break: break-word;
+  }
+
+  .recon-mobile-code-row span {
+    color: #475569;
+  }
+
+  .recon-mobile-status-details {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 12px;
+    padding: 10px;
+    background: #fff1f2;
+    border-radius: 8px;
+    color: #b91c1c;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .recon-mobile-empty {
+    width: 100%;
+    padding: 22px 12px;
+    text-align: center;
+    color: #15803d;
+    background: #fff;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .recon-sheet-info {
+    font-size: 11px;
+    line-height: 1.7;
+  }
+}
+
+/* Extra small mobile screens */
+@media (max-width: 360px) {
+  .recon-page {
+    padding: 9px;
+  }
+
+  .recon-summary {
+    gap: 5px;
+  }
+
+  .recon-summary-card {
+    padding: 9px 5px;
+  }
+
+  .recon-summary-card span {
+    font-size: 9px;
+  }
+
+  .recon-summary-card strong {
+    font-size: 17px;
+  }
+
+  .recon-mobile-card {
+    padding: 12px;
+  }
+
+  .recon-mobile-lot {
+    font-size: 14px;
+  }
+
+  .recon-badge {
+    font-size: 10px;
+    padding: 4px 7px;
+  }
+}
