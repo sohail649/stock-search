@@ -746,7 +746,7 @@ const matched = !quantityMismatch && !missingInErp && !contractMismatch && !code
     .sort((a, b) => a.lot.localeCompare(b.lot));
 };
 const formatNumber = (v) =>
-  Number(v.toFixed(2)).toLocaleString("en-US");
+  Number(((Number(v) || 0).toFixed(2))).toLocaleString("en-US");
 
 export default function Reconciliation({ onHome }) {
   const [issuanceFile, setIssuanceFile] = useState(null);
@@ -841,7 +841,24 @@ export default function Reconciliation({ onHome }) {
         }
 
         if (savedReport) {
-          setResults(savedReport.results || []);
+          const restoredResults = (savedReport.results || [])
+            .filter((row) => row && typeof row === "object")
+            .map((row) => ({
+              ...row,
+              issueContracts: Array.isArray(row.issueContracts) ? row.issueContracts : [],
+              erpContracts: Array.isArray(row.erpContracts) ? row.erpContracts : [],
+              issueCodes: Array.isArray(row.issueCodes) ? row.issueCodes : [],
+              erpCodes: Array.isArray(row.erpCodes) ? row.erpCodes : [],
+              issueDateKeys: Array.isArray(row.issueDateKeys) ? row.issueDateKeys : [],
+              issueTotal: Number(row.issueTotal) || 0,
+              erpTotal: Number(row.erpTotal) || 0,
+              difference: Number(row.difference) || 0,
+              quantityMismatch: Boolean(row.quantityMismatch),
+              contractMismatch: Boolean(row.contractMismatch),
+              codeMismatch: Boolean(row.codeMismatch),
+              matched: Boolean(row.matched),
+            }));
+          setResults(restoredResults);
           setTotalIssue(savedReport.totalIssue || 0);
           setTotalErp(savedReport.totalErp || 0);
           setIssuanceSheet(savedReport.issuanceSheet || "");
@@ -850,7 +867,7 @@ export default function Reconciliation({ onHome }) {
 
           setStorageStatus((p) => ({
             ...p,
-            report: `Restored ${savedReport.results?.length || 0} lots`,
+            report: `Restored ${restoredResults.length} lots`,
           }));
 
           setSuccess("Last saved report restored");
@@ -987,10 +1004,10 @@ export default function Reconciliation({ onHome }) {
   const filteredBySearch = results.filter((r) => {
     const lotText = normalizeSearchText(`${r.lot || ""} ${r.lotDisplay || ""}`);
     const contractText = normalizeSearchText(
-      [...r.issueContracts, ...r.erpContracts].join(" ")
+      [...(r.issueContracts || []), ...(r.erpContracts || [])].join(" ")
     );
     const itemText = normalizeSearchText(
-      [...r.issueCodes, ...r.erpCodes].join(" ")
+      [...(r.issueCodes || []), ...(r.erpCodes || [])].join(" ")
     );
 
     const lotMatch = !appliedLotSearch || lotText.includes(appliedLotSearch);
