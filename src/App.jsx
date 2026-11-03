@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import Reconciliation from "./Reconciliation.jsx";
+import AuthGate from "./AuthGate.jsx";
+import AccessManagement from "./AccessManagement.jsx";
 import {
   collection,
   doc,
@@ -12,7 +14,6 @@ import {
 import { db } from "./firebase.js";
 import "./App.css";
 
-const UPLOAD_PASSWORD = "Stock@2025";
 
 const bytesToBase64 = (bytes) => {
   let binary = "";
@@ -418,7 +419,7 @@ const getTransactions = (workbook, type) => {
 };
 
 
-function App() {
+function StockApp({ user, accessProfile, isSuperAdmin, onSignOut }) {
   const [workbook, setWorkbook] = useState(null);
   const [fileName, setFileName] = useState("");
   const [stockUpdatedTill, setStockUpdatedTill] = useState("");
@@ -617,12 +618,6 @@ function App() {
   ]);
 
   const handleShowUpload = () => {
-    const enteredPassword = prompt("Upload ke liye password likho:");
-    if (enteredPassword === null) return;
-    if (enteredPassword !== UPLOAD_PASSWORD) {
-      setError("Ghalat password!");
-      return;
-    }
     setError("");
     setCurrentView("upload");
     setTimeout(
@@ -1157,6 +1152,18 @@ function App() {
       <button className="nav-upload" onClick={handleShowUpload} type="button">
         ↑ Upload Stock
       </button>
+      {(isSuperAdmin || accessProfile?.role === "admin") && (
+        <button
+          className={`nav-summary ${currentView === "access" ? "is-active" : ""}`}
+          onClick={() => setCurrentView("access")}
+          type="button"
+        >
+          User Approvals
+        </button>
+      )}
+      <button className="nav-summary" onClick={onSignOut} type="button">
+        Sign Out
+      </button>
     </nav>
   );
 
@@ -1171,7 +1178,17 @@ function App() {
     );
 
   if (currentView === "reconciliation") {
-    return <Reconciliation />;
+    return <Reconciliation onHome={() => setCurrentView("home")} />;
+  }
+
+  if (currentView === "access" && (isSuperAdmin || accessProfile?.role === "admin")) {
+    return (
+      <AccessManagement
+        user={user}
+        isSuperAdmin={isSuperAdmin}
+        onHome={() => setCurrentView("home")}
+      />
+    );
   }
 
   if (currentView === "home") {
@@ -1193,6 +1210,13 @@ function App() {
             </div>
           </div>
           <div className="home-header-actions">
+            <span className="signed-in-user">{user?.displayName || user?.email || "Approved user"}</span>
+            {(isSuperAdmin || accessProfile?.role === "admin") && (
+              <button className="nav-summary" onClick={() => setCurrentView("access")} type="button">
+                User Approvals
+              </button>
+            )}
+            <button className="nav-summary" onClick={onSignOut} type="button">Sign Out</button>
             <button
               className="nav-upload"
               onClick={handleShowUpload}
@@ -2509,4 +2533,19 @@ function App() {
     </main>
   );
 }
+function App() {
+  return (
+    <AuthGate>
+      {({ user, accessProfile, isSuperAdmin, signOutUser }) => (
+        <StockApp
+          user={user}
+          accessProfile={accessProfile}
+          isSuperAdmin={isSuperAdmin}
+          onSignOut={signOutUser}
+        />
+      )}
+    </AuthGate>
+  );
+}
+
 export default App;
