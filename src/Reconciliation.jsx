@@ -454,12 +454,18 @@ const readExcel = async (file, type) => {
       const itemDisp = clean(rawItem);
       const contractDisp = clean(rawContract);
 
-      if (!isNonEmpty(lotDisp)) {
+      const issueQuality = type === "issuance" && indexes.quality !== -1
+        ? clean(row[indexes.quality])
+        : "";
+      const missingLotNumber = type === "issuance" && !isNonEmpty(lotDisp) && isNonEmpty(issueQuality);
+
+      // Issuance rows without a Lot Number are included only when Quality is filled.
+      if (!isNonEmpty(lotDisp) && !missingLotNumber) {
         exclBlank++;
         continue;
       }
 
-      if (isSumRow(lotDisp, itemDisp)) {
+      if (isNonEmpty(lotDisp) && isSumRow(lotDisp, itemDisp)) {
         exclSum++;
         continue;
       }
@@ -471,8 +477,10 @@ const readExcel = async (file, type) => {
         continue;
       }
 
-      const normalizedLot = normalizeLot(lotDisp);
       const excelRow = i + 1;
+      const normalizedLot = missingLotNumber
+        ? `__LOT_MISSING_ROW_${excelRow}`
+        : normalizeLot(lotDisp);
 
       const issueField = (index) =>
         type === "issuance" && index !== -1 ? clean(row[index]) : "";
@@ -485,7 +493,8 @@ const readExcel = async (file, type) => {
 
       records.push({
         lot: normalizedLot,
-        lotDisplay: lotDisp,
+        lotDisplay: missingLotNumber ? "Lot Number Miss" : lotDisp,
+        missingLotNumber,
         itemCode: itemDisp || "",
         normalizedCode: normalizeItemCode(itemDisp || ""),
         contract: contractDisp || "",
@@ -658,6 +667,41 @@ const compareData = (issuanceRecords, erpRecords) => {
     .map((lot) => {
       const issue = issuance.get(lot);
       const inv = erp.get(lot);
+
+      // Missing-lot issuance rows are shown as their own Difference cards.
+      if (issue?.missingLotNumber) {
+        const issueTotal = issue.total || 0;
+        return {
+          lot,
+          lotDisplay: "Lot Number Miss",
+          issueTotal,
+          erpTotal: 0,
+          difference: issueTotal,
+          issueContracts: [...(issue.contracts || [])],
+          erpContracts: [],
+          issueCodes: [...(issue.itemCodes || [])],
+          erpCodes: [],
+          issueContractsDisplay: [...(issue.contracts || [])],
+          erpContractsDisplay: [],
+          issueCodesDisplay: [...(issue.itemCodes || [])],
+          erpCodesDisplay: [],
+          greigeSupplier: [...(issue.greigeSuppliers || [])].join(", "),
+          customer: [...(issue.customers || [])].join(", "),
+          quality: [...(issue.qualities || [])].join(", "),
+          greigeWidth: [...(issue.greigeWidths || [])].join(", "),
+          weaveBlend: [...(issue.weaveBlends || [])].join(", "),
+          issueDate: [...(issue.issueDates || [])].join(", "),
+          issueDateKeys: [...(issue.issueDateKeys || [])],
+          codeDifferences: ["Lot Number Miss"],
+          contractMismatch: false,
+          codeMismatch: false,
+          quantityMismatch: false,
+          missingLotNumber: true,
+          missingInIssuance: false,
+          missingInErp: false,
+          matched: false,
+        };
+      }
 
       const issueTotal = issue?.total ?? 0;
       const erpTotal = inv?.total ?? 0;
@@ -1111,10 +1155,8 @@ export default function Reconciliation({ onHome }) {
 
       <div className="recon-upload-grid">
         <div className="recon-upload-card">
-          <label>Issuance File (Daily_Greige_Issuance_Report_OCT)</label>
-          <small>
-            Uses: ERP Lot # + Contract # + Item Code + Issue Qty | All rows of same Lot are summed
-          </small>
+          <label>Issuance File (Daily-Greige-Issuance-Report)</label>
+        
           <input
             type="file"
             accept=".xlsx,.xls,.csv"
@@ -1133,10 +1175,8 @@ export default function Reconciliation({ onHome }) {
         </div>
 
         <div className="recon-upload-card">
-          <label>ERP File (SUBINVENTRY_31.10.26)</label>
-          <small>
-            Uses: Batching Lot + Sale Order # (Contract) + Item Code + QTY | All rows summed
-          </small>
+          <label>ERP File (SUBINVENTRY)</label>
+        
           <input
             type="file"
             accept=".xlsx,.xls,.csv"
@@ -1422,7 +1462,7 @@ export default function Reconciliation({ onHome }) {
                     <td>{formatNumber(row.erpTotal)}</td>
                     <td
                       className={
-                        row.quantityMismatch
+                        row.quantityMismatch || row.missingLotNumber
                           ? "recon-cell-error"
                           : "recon-cell-success"
                       }
@@ -1442,6 +1482,7 @@ export default function Reconciliation({ onHome }) {
                           {row.contractMismatch && <small style={{color:'#d32f2f'}}>Contract Diff</small>}
                           {row.codeMismatch && <small style={{color:'#ed6c02'}}>Code Diff</small>}
                           {row.quantityMismatch && <small style={{color:'#d32f2f'}}>Qty Diff</small>}
+                          {row.missingLotNumber && <small style={{color:'#d32f2f', fontWeight:700}}>Lot Number Miss</small>}
                         </div>
                       )}
 
@@ -1565,7 +1606,7 @@ export default function Reconciliation({ onHome }) {
                     <span>Difference</span>
                     <strong
                       className={
-                        row.quantityMismatch
+                        row.quantityMismatch || row.missingLotNumber
                           ? "recon-cell-error"
                           : "recon-cell-success"
                       }
