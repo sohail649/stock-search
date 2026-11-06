@@ -1,11 +1,18 @@
-
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import html2canvas from "html2canvas";
 import * as XLSX from "xlsx";
+import {
+  collection,
+  doc,
+  getDocs,
+  onSnapshot,
+  writeBatch,
+} from "firebase/firestore";
+import { db } from "./firebase.js";
 import "./ArrivalManagement.css";
 
 const EMPTY_ROW = {
-  supplier: "", customer: "", quality: "", width: "", weave: "",
+  date: "", supplier: "", customer: "", quality: "", width: "", weave: "",
   brt: "", meter: "", vehicle: "", remarks: "", type: "OWN",
 };
 
@@ -15,9 +22,73 @@ const FIELD_LABELS = [
   ["meter", "Meter"], ["vehicle", "Vehicle #"], ["remarks", "Remarks"],
 ];
 
+// Arrival Management ka data alag collection mein save hota hai.
+// Existing Stock Manager collections (stock/current, stockBackups, etc.) touch nahi hotin.
+const CLOUD_DOC_REF = doc(db, "arrivalManagementShared", "current");
+const CLOUD_CHUNK_SIZE = 100;
+
 const clean = (v) => String(v ?? "").trim();
 const norm = (v) => clean(v).toLowerCase().replace(/[^a-z0-9]/g, "");
 const number = (v) => Number(String(v ?? "").replace(/,/g, "")) || 0;
+
+function normalizeDateForFilter(value) {
+  const text = clean(value);
+  if (!text) return "";
+
+  // YYYY-MM-DD / YYYY/MM/DD
+  let match = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (match) {
+    return `${match[1]}-${String(match[2]).padStart(2, "0")}-${String(match[3]).padStart(2, "0")}`;
+  }
+
+  // DD-MMM-YYYY (for example 06-Nov-2026)
+  match = text.match(/^(\d{1,2})[-\s/.]([A-Za-z]{3,})[-\s/.](\d{2,4})$/);
+  if (match) {
+    const monthNames = [
+      "jan", "feb", "mar", "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    const monthIndex = monthNames.indexOf(match[2].slice(0, 3).toLowerCase());
+    if (monthIndex >= 0) {
+      const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+      return `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(match[1]).padStart(2, "0")}`;
+    }
+  }
+
+  // Common Excel date format in Pakistan: DD/MM/YYYY or DD-MM-YYYY.
+  match = text.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/);
+  if (match) {
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+  }
+
+  return "";
+}
+
+async function readCloudChunks(subcollectionName, chunkCount) {
+  if (!chunkCount) return [];
+
+  const snapshot = await getDocs(
+    collection(db, "arrivalManagementShared", "current", subcollectionName)
+  );
+
+  return snapshot.docs
+    .sort((a, b) => Number(a.id) - Number(b.id))
+    .slice(0, chunkCount)
+    .flatMap((item) => {
+      const savedRows = item.data()?.rows;
+      return Array.isArray(savedRows) ? savedRows : [];
+    });
+}
 
 function parseSections(rows, kind) {
   const result = [];
@@ -61,6 +132,7 @@ function parseSections(rows, kind) {
     result.push({
       ...EMPTY_ROW,
       type,
+      date: clean(get("date", "arrivaldate", "stockdate", "receiveddate", "receivingdate", "receiptdate", "dateofreceipt", "dateofarrival", "inwarddate", "challandate", "entrydate", "dated")),
       supplier: clean(supplier),
       customer: clean(get("customer")),
       quality: clean(get("quality")),
@@ -115,6 +187,7 @@ function parseStockRows(rows) {
     out.push({
       ...EMPTY_ROW,
       type,
+      date: clean(get("date", "arrivaldate", "stockdate", "receiveddate", "receivingdate", "receiptdate", "dateofreceipt", "dateofarrival", "inwarddate", "challandate", "entrydate", "dated")),
       supplier,
       quality: clean(get("quality")),
       width: clean(get("width")),
@@ -214,6 +287,7 @@ function downloadBlob(blob, name) {
 
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
+
 // --------------------------------------------------
 // REPORT TABLE
 // --------------------------------------------------
@@ -275,17 +349,17 @@ function ReportTable({
           </tr>
         </tbody>
 
-       <tfoot>
-  <tr className="arrival-section-total">
-    <td colSpan={7}>
-      {type === "OWN" ? "Own Total" : "Cmt Total"}
-    </td>
-    <td>{meterTotal.toLocaleString()}</td>
-    <td colSpan={2}>
-      {vehicles} VEHICLES
-    </td>
-  </tr>
-</tfoot>
+        <tfoot>
+          <tr className="arrival-section-total">
+            <td colSpan={7}>
+              {type === "OWN" ? "Own Total" : "Cmt Total"}
+            </td>
+            <td>{meterTotal.toLocaleString()}</td>
+            <td colSpan={2}>
+              {vehicles} VEHICLES
+            </td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   );
@@ -314,13 +388,26 @@ export default function ArrivalManagement({ onHome }) {
   const [showAuto, setShowAuto] = useState(false);
   const [selected, setSelected] = useState([]);
 
+  // Stock filters apply only when Search is pressed.
+  const EMPTY_STOCK_FILTERS = { date: "", quality: "", supplier: "" };
+  const [stockFilterDraft, setStockFilterDraft] = useState({ ...EMPTY_STOCK_FILTERS });
+  const [stockFilters, setStockFilters] = useState({ ...EMPTY_STOCK_FILTERS });
+
   const [manual, setManual] = useState({ ...EMPTY_ROW });
 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cloudReady, setCloudReady] = useState(false);
+  const [cloudLoading, setCloudLoading] = useState(true);
+  const [cloudSaving, setCloudSaving] = useState(false);
 
-  // Manual vehicle count fields.
-  // Blank means automatic count.
+  const lastSavedRevisionRef = useRef("");
+  const lastAppliedRevisionRef = useRef("");
+  const loadingRevisionRef = useRef("");
+  const lastPersistedPayloadRef = useRef("");
+  const saveQueueRef = useRef(Promise.resolve());
+
+  // Manual vehicle count fields. Blank means automatic count.
   const [manualOwnVehicles, setManualOwnVehicles] = useState("");
   const [manualCmtVehicles, setManualCmtVehicles] = useState("");
 
@@ -370,17 +457,295 @@ export default function ArrivalManagement({ onHome }) {
     (r) => !usedSignatures.has(signature(r))
   );
 
+  const filteredStockRows = useMemo(() => {
+    const dateFilter = stockFilters.date;
+    const qualityFilter = stockFilters.quality.trim().toLowerCase();
+    const supplierFilter = stockFilters.supplier.trim().toLowerCase();
+
+    return stockRows.filter((r) => {
+      if (
+        dateFilter &&
+        normalizeDateForFilter(r.date) !== dateFilter
+      ) {
+        return false;
+      }
+
+      if (
+        qualityFilter &&
+        !clean(r.quality).toLowerCase().includes(qualityFilter)
+      ) {
+        return false;
+      }
+
+      if (
+        supplierFilter &&
+        !clean(r.supplier).toLowerCase().includes(supplierFilter)
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [stockRows, stockFilters]);
+
+  function applyStockFilters() {
+    setStockFilters({
+      date: stockFilterDraft.date,
+      quality: stockFilterDraft.quality,
+      supplier: stockFilterDraft.supplier,
+    });
+  }
+
+  function clearStockFilters() {
+    const empty = { date: "", quality: "", supplier: "" };
+    setStockFilterDraft(empty);
+    setStockFilters(empty);
+  }
+
+  // --------------------------------------------------
+  // FIREBASE LOAD: shared data sab users ko milega
+  // --------------------------------------------------
+
+  useEffect(() => {
+    let active = true;
+
+    const unsubscribe = onSnapshot(
+      CLOUD_DOC_REF,
+      async (snapshot) => {
+        if (!active) return;
+
+        if (!snapshot.exists()) {
+          setCloudLoading(false);
+          setCloudReady(true);
+          return;
+        }
+
+        const meta = snapshot.data();
+        const revision = String(meta.revision || "");
+
+        // Apni hi save ki hui update dobara state par apply na karein.
+        if (
+          revision &&
+          (revision === lastSavedRevisionRef.current ||
+            revision === lastAppliedRevisionRef.current ||
+            revision === loadingRevisionRef.current)
+        ) {
+          return;
+        }
+
+        loadingRevisionRef.current = revision;
+        setCloudLoading(true);
+
+        try {
+          const [remoteStockRows, remoteRows] = await Promise.all([
+            readCloudChunks("stockChunks", Number(meta.stockChunkCount) || 0),
+            readCloudChunks("unloadingChunks", Number(meta.unloadingChunkCount) || 0),
+          ]);
+
+          if (!active || revision !== loadingRevisionRef.current) return;
+
+          const remotePayload = {
+            stockRows: remoteStockRows,
+            rows: remoteRows,
+            reportDate: meta.reportDate || new Date().toLocaleDateString("en-CA"),
+            manualOwnVehicles: meta.manualOwnVehicles ?? "",
+            manualCmtVehicles: meta.manualCmtVehicles ?? "",
+            stockFileName: meta.stockFileName || "",
+            previousFileName: meta.previousFileName || "",
+          };
+
+          lastAppliedRevisionRef.current = revision;
+          lastPersistedPayloadRef.current = JSON.stringify(remotePayload);
+
+          setStockRows(remotePayload.stockRows);
+          setRows(remotePayload.rows);
+          setReportDate(remotePayload.reportDate);
+          setManualOwnVehicles(remotePayload.manualOwnVehicles);
+          setManualCmtVehicles(remotePayload.manualCmtVehicles);
+          setStockFile(null);
+          setPreviousFile(null);
+          setStockBook(
+            remotePayload.stockFileName
+              ? { name: remotePayload.stockFileName }
+              : null
+          );
+          setPreviousBook(
+            remotePayload.previousFileName
+              ? { name: remotePayload.previousFileName }
+              : null
+          );
+          setError("");
+        } catch (e) {
+          console.error("Firebase load error:", e);
+          if (active && revision === loadingRevisionRef.current) {
+            setError(
+              "Firebase se saved Arrival data load nahi ho saka. Firestore Rules / internet check karein."
+            );
+          }
+        } finally {
+          if (active && revision === loadingRevisionRef.current) {
+            setCloudLoading(false);
+            setCloudReady(true);
+            loadingRevisionRef.current = "";
+          }
+        }
+      },
+      (e) => {
+        console.error("Firebase listener error:", e);
+        if (!active) return;
+        setError(
+          "Firebase connection nahi ho saki. Firestore Rules / internet check karein."
+        );
+        setCloudLoading(false);
+        setCloudReady(true);
+      }
+    );
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  // Firebase mein wahi app data save hoga; purane Stock Manager collections alag hain.
+  const cloudPayload = useMemo(
+    () => ({
+      stockRows,
+      rows,
+      reportDate,
+      manualOwnVehicles,
+      manualCmtVehicles,
+      stockFileName: stockBook?.name || stockFile?.name || "",
+      previousFileName: previousBook?.name || previousFile?.name || "",
+    }),
+    [
+      stockRows,
+      rows,
+      reportDate,
+      manualOwnVehicles,
+      manualCmtVehicles,
+      stockBook?.name,
+      stockFile?.name,
+      previousBook?.name,
+      previousFile?.name,
+    ]
+  );
+
+  const cloudPayloadText = useMemo(
+    () => JSON.stringify(cloudPayload),
+    [cloudPayload]
+  );
+
+  // --------------------------------------------------
+  // FIREBASE SAVE: atomic batch, pehle se saved state safe rahegi
+  // --------------------------------------------------
+
+  useEffect(() => {
+    if (!cloudReady || cloudLoading) return;
+    if (lastPersistedPayloadRef.current === cloudPayloadText) return;
+
+    const timer = setTimeout(() => {
+      const payloadToSave = cloudPayload;
+      const payloadTextToSave = cloudPayloadText;
+
+      const saveTask = async () => {
+        const revision = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const stockChunkCount = Math.ceil(
+          payloadToSave.stockRows.length / CLOUD_CHUNK_SIZE
+        );
+        const unloadingChunkCount = Math.ceil(
+          payloadToSave.rows.length / CLOUD_CHUNK_SIZE
+        );
+
+        // Firestore batch limit 500 writes hai. Is check se old data safe rahega.
+        const totalWrites = stockChunkCount + unloadingChunkCount + 1;
+        if (totalWrites > 500) {
+          throw new Error(
+            "Arrival data Firestore batch limit se zyada hai. Data save nahi hua; pehle se saved data safe hai."
+          );
+        }
+
+        const batch = writeBatch(db);
+
+        for (let i = 0; i < stockChunkCount; i += 1) {
+          const chunkRef = doc(
+            db,
+            "arrivalManagementShared",
+            "current",
+            "stockChunks",
+            String(i)
+          );
+          batch.set(chunkRef, {
+            rows: payloadToSave.stockRows.slice(
+              i * CLOUD_CHUNK_SIZE,
+              (i + 1) * CLOUD_CHUNK_SIZE
+            ),
+          });
+        }
+
+        for (let i = 0; i < unloadingChunkCount; i += 1) {
+          const chunkRef = doc(
+            db,
+            "arrivalManagementShared",
+            "current",
+            "unloadingChunks",
+            String(i)
+          );
+          batch.set(chunkRef, {
+            rows: payloadToSave.rows.slice(
+              i * CLOUD_CHUNK_SIZE,
+              (i + 1) * CLOUD_CHUNK_SIZE
+            ),
+          });
+        }
+
+        batch.set(
+          CLOUD_DOC_REF,
+          {
+            revision,
+            stockChunkCount,
+            unloadingChunkCount,
+            stockFileName: payloadToSave.stockFileName,
+            previousFileName: payloadToSave.previousFileName,
+            reportDate: payloadToSave.reportDate,
+            manualOwnVehicles: payloadToSave.manualOwnVehicles,
+            manualCmtVehicles: payloadToSave.manualCmtVehicles,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+
+        lastSavedRevisionRef.current = revision;
+        setCloudSaving(true);
+        await batch.commit();
+        lastPersistedPayloadRef.current = payloadTextToSave;
+        setError("");
+      };
+
+      saveQueueRef.current = saveQueueRef.current
+        .catch(() => {})
+        .then(saveTask)
+        .catch((e) => {
+          console.error("Firebase save error:", e);
+          setError(
+            e.message ||
+              "Arrival data Firebase par save nahi ho saka. Purana saved data delete nahi hua."
+          );
+        })
+        .finally(() => setCloudSaving(false));
+    }, 900);
+
+    return () => clearTimeout(timer);
+  }, [cloudReady, cloudLoading, cloudPayload, cloudPayloadText]);
+
   // --------------------------------------------------
   // LOAD STOCK
   // --------------------------------------------------
 
   async function loadStock(file) {
-    setStockFile(file);
-    setStockBook(null);
-    setStockRows([]);
-    setError("");
-
     if (!file) return;
+
+    setError("");
 
     try {
       setBusy(true);
@@ -389,31 +754,36 @@ export default function ArrivalManagement({ onHome }) {
       const data = book.sheets.STOCK || [];
       const parsed = parseStockRows(data);
 
+      // Invalid / empty workbook se pehle wala saved stock replace nahi hoga.
+      if (!parsed.length) {
+        setError(
+          "STOCK sheet mein rows nahi milin. Sheet ke OWN/CMT headings aur Supplier header check karein. Purana saved stock safe hai."
+        );
+        return;
+      }
+
+      setStockFile(file);
       setStockBook(book);
       setStockRows(parsed);
 
-      if (!previousFile && book.sheets.UNLOADING) {
+      if (!previousFile && !previousBook && book.sheets.UNLOADING) {
         const prev = parseSections(
           book.sheets.UNLOADING,
           "previous"
         );
 
-        setPreviousBook({
-          name: `${file.name} — UNLOADING sheet`,
-        });
+        if (prev.length) {
+          setPreviousBook({
+            name: `${file.name} — UNLOADING sheet`,
+          });
 
-        setRows(
-          prev.map((r, i) => ({
-            ...r,
-            id: `previous-${i}`,
-          }))
-        );
-      }
-
-      if (!parsed.length) {
-        setError(
-          "STOCK sheet mein rows nahi milin. Sheet ke OWN/CMT headings aur Supplier header check karein."
-        );
+          setRows(
+            prev.map((r, i) => ({
+              ...r,
+              id: `previous-${i}`,
+            }))
+          );
+        }
       }
     } catch (e) {
       setError(
@@ -429,11 +799,9 @@ export default function ArrivalManagement({ onHome }) {
   // --------------------------------------------------
 
   async function loadPrevious(file) {
-    setPreviousFile(file);
-    setPreviousBook(null);
-    setError("");
-
     if (!file) return;
+
+    setError("");
 
     try {
       setBusy(true);
@@ -448,6 +816,14 @@ export default function ArrivalManagement({ onHome }) {
 
       const parsed = parseSections(data, "previous");
 
+      if (!parsed.length) {
+        setError(
+          "Previous unloading file mein valid rows nahi milin. Pehle se saved unloading data safe hai."
+        );
+        return;
+      }
+
+      setPreviousFile(file);
       setPreviousBook(book);
 
       setRows(
@@ -524,131 +900,132 @@ export default function ArrivalManagement({ onHome }) {
   // IMAGE EXPORT
   // --------------------------------------------------
 
- async function exportImage(kind) {
-  const target = document.getElementById(
-    `arrival-${kind}-print`
-  );
+  async function exportImage(kind) {
+    const target = document.getElementById(
+      `arrival-${kind}-print`
+    );
 
-  if (!target) return;
+    if (!target) return;
 
-  let clone = null;
+    let clone = null;
 
-  try {
-    setError("");
+    try {
+      setError("");
 
-    clone = target.cloneNode(true);
+      clone = target.cloneNode(true);
 
-    clone.style.width = "max-content";
-    clone.style.minWidth = "1100px";
-    clone.style.maxWidth = "none";
-    clone.style.padding = "24px";
-    clone.style.background = "#fff";
-    clone.style.position = "fixed";
-    clone.style.display = "inline-block";
-    clone.style.left = "-12000px";
-    clone.style.top = "0";
-    clone.style.transform = "none";
+      clone.style.width = "max-content";
+      clone.style.minWidth = "1100px";
+      clone.style.maxWidth = "none";
+      clone.style.padding = "24px";
+      clone.style.background = "#fff";
+      clone.style.position = "fixed";
+      clone.style.display = "inline-block";
+      clone.style.left = "-12000px";
+      clone.style.top = "0";
+      clone.style.transform = "none";
 
-    document.body.appendChild(clone);
+      document.body.appendChild(clone);
 
-    // Tables ko content ke mutabiq auto width dein
-    clone.querySelectorAll(".arrival-report-table").forEach((table) => {
-      table.style.tableLayout = "auto";
-      table.style.width = "max-content";
-      table.style.minWidth = "100%";
-      table.style.maxWidth = "none";
-      table.style.borderCollapse = "collapse";
+      // Tables ko content ke mutabiq auto width dein
+      clone.querySelectorAll(".arrival-report-table").forEach((table) => {
+        table.style.tableLayout = "auto";
+        table.style.width = "max-content";
+        table.style.minWidth = "100%";
+        table.style.maxWidth = "none";
+        table.style.borderCollapse = "collapse";
 
-      table.querySelectorAll("th, td").forEach((cell) => {
-        cell.style.whiteSpace = "nowrap";
-        cell.style.wordBreak = "normal";
-        cell.style.overflowWrap = "normal";
-        cell.style.width = "auto";
-        cell.style.height = "auto";
-        cell.style.padding = "4px 8px";
-        cell.style.lineHeight = "1.2";
-        cell.style.fontSize = "11px";
+        table.querySelectorAll("th, td").forEach((cell) => {
+          cell.style.whiteSpace = "nowrap";
+          cell.style.wordBreak = "normal";
+          cell.style.overflowWrap = "normal";
+          cell.style.width = "auto";
+          cell.style.height = "auto";
+          cell.style.padding = "4px 8px";
+          cell.style.lineHeight = "1.2";
+          cell.style.fontSize = "11px";
+        });
+
+        // Summary aur Unloading mein Weave column ki position alag hai
+        const isSummary = kind === "summary";
+
+        const widthColumn = isSummary ? 4 : 5;
+        const weaveColumn = isSummary ? 5 : 6;
+        const brtColumn = isSummary ? 6 : 7;
+        const meterColumn = isSummary ? 7 : 8;
+
+        // Width compact
+        table.querySelectorAll(
+          `th:nth-child(${widthColumn}), td:nth-child(${widthColumn})`
+        ).forEach((cell) => {
+          cell.style.width = "55px";
+          cell.style.minWidth = "55px";
+          cell.style.maxWidth = "70px";
+        });
+
+        // B/R/T compact
+        table.querySelectorAll(
+          `th:nth-child(${brtColumn}), td:nth-child(${brtColumn})`
+        ).forEach((cell) => {
+          cell.style.width = "75px";
+          cell.style.minWidth = "65px";
+        });
+
+        // Meter compact
+        table.querySelectorAll(
+          `th:nth-child(${meterColumn}), td:nth-child(${meterColumn})`
+        ).forEach((cell) => {
+          cell.style.width = "80px";
+          cell.style.minWidth = "70px";
+        });
+
+        // Weave ko zyada space
+        table.querySelectorAll(
+          `th:nth-child(${weaveColumn}), td:nth-child(${weaveColumn})`
+        ).forEach((cell) => {
+          cell.style.width = "220px";
+          cell.style.minWidth = "220px";
+          cell.style.maxWidth = "350px";
+          cell.style.whiteSpace = "normal";
+          cell.style.wordBreak = "break-word";
+          cell.style.overflowWrap = "anywhere";
+        });
       });
 
-      // Summary aur Unloading mein Weave column ki position alag hai
-      const isSummary = kind === "summary";
-
-      const widthColumn = isSummary ? 4 : 5;
-      const weaveColumn = isSummary ? 5 : 6;
-      const brtColumn = isSummary ? 6 : 7;
-      const meterColumn = isSummary ? 7 : 8;
-
-      // Width compact
-      table.querySelectorAll(
-        `th:nth-child(${widthColumn}), td:nth-child(${widthColumn})`
-      ).forEach((cell) => {
-        cell.style.width = "55px";
-        cell.style.minWidth = "55px";
-        cell.style.maxWidth = "70px";
+      clone.querySelectorAll("tr").forEach((row) => {
+        row.style.height = "auto";
       });
 
-      // B/R/T compact
-      table.querySelectorAll(
-        `th:nth-child(${brtColumn}), td:nth-child(${brtColumn})`
-      ).forEach((cell) => {
-        cell.style.width = "75px";
-        cell.style.minWidth = "65px";
+      const canvas = await html2canvas(clone, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        useCORS: true,
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: Math.max(1200, clone.scrollWidth),
+        windowHeight: clone.scrollHeight,
       });
 
-      // Meter compact
-      table.querySelectorAll(
-        `th:nth-child(${meterColumn}), td:nth-child(${meterColumn})`
-      ).forEach((cell) => {
-        cell.style.width = "80px";
-        cell.style.minWidth = "70px";
-      });
-
-      // Weave ko zyada space
-      table.querySelectorAll(
-        `th:nth-child(${weaveColumn}), td:nth-child(${weaveColumn})`
-      ).forEach((cell) => {
-        cell.style.width = "220px";
-        cell.style.minWidth = "220px";
-        cell.style.maxWidth = "350px";
-        cell.style.whiteSpace = "normal";
-        cell.style.wordBreak = "break-word";
-        cell.style.overflowWrap = "anywhere";
-      });
-    });
-
-    clone.querySelectorAll("tr").forEach((row) => {
-      row.style.height = "auto";
-    });
-
-    const canvas = await html2canvas(clone, {
-      scale: 2,
-      backgroundColor: "#ffffff",
-      useCORS: true,
-      logging: false,
-      scrollX: 0,
-      scrollY: 0,
-      windowWidth: Math.max(1200, clone.scrollWidth),
-      windowHeight: clone.scrollHeight,
-    });
-
-    canvas.toBlob((png) => {
-      if (png) {
-        downloadBlob(
-          png,
-          `Arrival-${kind}-${reportDate}.png`
-        );
-      } else {
-        setError("Image create nahi ho saki.");
-      }
-    }, "image/png");
-
-  } catch (err) {
-    console.error("Image export error:", err);
-    setError("Image download nahi ho saki. Dobara try karein.");
-  } finally {
-    if (clone) clone.remove();
+      canvas.toBlob((png) => {
+        if (png) {
+          downloadBlob(
+            png,
+            `Arrival-${kind}-${reportDate}.png`
+          );
+        } else {
+          setError("Image create nahi ho saki.");
+        }
+      }, "image/png");
+    } catch (err) {
+      console.error("Image export error:", err);
+      setError("Image download nahi ho saki. Dobara try karein.");
+    } finally {
+      if (clone) clone.remove();
+    }
   }
-} // --------------------------------------------------
+
+  // --------------------------------------------------
   // PRINT REPORT - A4 PORTRAIT ONE PAGE
   // --------------------------------------------------
 
@@ -992,30 +1369,30 @@ export default function ArrivalManagement({ onHome }) {
           summary={summary}
           vehicles={cmtVehicles}
         />
-    {!summary && (
-  <table className="arrival-report-table arrival-grand-total">
-    <colgroup>
-      <col style={{ width: "3%" }} />
-      <col style={{ width: "10%" }} />
-      <col style={{ width: "10%" }} />
-      <col style={{ width: "11%" }} />
-      <col style={{ width: "5%" }} />
-      <col style={{ width: "21%" }} />
-      <col style={{ width: "6%" }} />
-      <col style={{ width: "7%" }} />
-      <col style={{ width: "12%" }} />
-      <col style={{ width: "15%" }} />
-    </colgroup>
-    <tbody>
-      <tr className="arrival-grand-total-row">
-        <td colSpan={6}>Grand Total</td>
-        <td colSpan={2}>{totalMeters.toLocaleString()}</td>
-        <td colSpan={2}>{vehicles} VEHICLES</td>
-      </tr>
-    </tbody>
-  </table>
-)}
 
+        {!summary && (
+          <table className="arrival-report-table arrival-grand-total">
+            <colgroup>
+              <col style={{ width: "3%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "5%" }} />
+              <col style={{ width: "21%" }} />
+              <col style={{ width: "6%" }} />
+              <col style={{ width: "7%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "15%" }} />
+            </colgroup>
+            <tbody>
+              <tr className="arrival-grand-total-row">
+                <td colSpan={6}>Grand Total</td>
+                <td colSpan={2}>{totalMeters.toLocaleString()}</td>
+                <td colSpan={2}>{vehicles} VEHICLES</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
 
         {summary && (
           <table className="arrival-summary-totals">
@@ -1167,7 +1544,7 @@ export default function ArrivalManagement({ onHome }) {
                   </span>
 
                   <span className="arrival-file-picker__name">
-                    {stockFile?.name || "No file selected"}
+                    {stockFile?.name || stockBook?.name || "No file selected"}
                   </span>
 
                   <input
@@ -1218,6 +1595,18 @@ export default function ArrivalManagement({ onHome }) {
               />
             </label>
 
+            {cloudLoading && (
+              <div className="arrival-status">
+                Loading shared Arrival data from Firebase…
+              </div>
+            )}
+
+            {cloudSaving && (
+              <div className="arrival-status">
+                Saving Arrival data to Firebase…
+              </div>
+            )}
+
             {busy && (
               <div className="arrival-status">
                 Reading workbook…
@@ -1240,11 +1629,75 @@ export default function ArrivalManagement({ onHome }) {
           {section === "stock" && (
             <div className="arrival-panel">
               <h3>
-                Available Stock Cards ({stockRows.length})
+                Available Stock Cards ({filteredStockRows.length} / {stockRows.length})
               </h3>
 
+              <div className="arrival-stock-filters arrival-manual-form">
+                <label>
+                  Date
+                  <input
+                    type="date"
+                    value={stockFilterDraft.date}
+                    onChange={(e) =>
+                      setStockFilterDraft((old) => ({
+                        ...old,
+                        date: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Quality
+                  <input
+                    type="text"
+                    placeholder="Quality ka koi hissa likhein"
+                    value={stockFilterDraft.quality}
+                    onChange={(e) =>
+                      setStockFilterDraft((old) => ({
+                        ...old,
+                        quality: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Supplier
+                  <input
+                    type="text"
+                    placeholder="Supplier ka koi hissa likhein"
+                    value={stockFilterDraft.supplier}
+                    onChange={(e) =>
+                      setStockFilterDraft((old) => ({
+                        ...old,
+                        supplier: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <div className="arrival-stock-filter-actions">
+                  <button
+                    type="button"
+                    className="arrival-action arrival-action--primary"
+                    onClick={applyStockFilters}
+                  >
+                    Search
+                  </button>
+
+                  <button
+                    type="button"
+                    className="arrival-action"
+                    onClick={clearStockFilters}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
               <div className="arrival-card-grid">
-                {stockRows.map((r) => (
+                {filteredStockRows.map((r) => (
                   <article
                     className="arrival-data-card"
                     key={r.stockId}
@@ -1270,6 +1723,12 @@ export default function ArrivalManagement({ onHome }) {
                   </article>
                 ))}
               </div>
+
+              {filteredStockRows.length === 0 && (
+                <div className="arrival-status">
+                  Koi matching stock record nahi mila.
+                </div>
+              )}
             </div>
           )}
 
