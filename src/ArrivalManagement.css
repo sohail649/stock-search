@@ -1,0 +1,390 @@
+/* Arrival Management module styles - scoped to .arrival-management */
+.arrival-management {
+  --arrival-ink: #172033;
+  --arrival-muted: #687386;
+  --arrival-line: #e1e7ef;
+  --arrival-bg: #f5f7fb;
+  --arrival-blue: #2457a7;
+  --arrival-green: #18794e;
+  color: var(--arrival-ink);
+  width: 100%;
+  min-height: 100%;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--arrival-bg);
+  font-family: inherit;
+}
+
+.arrival-management * {
+  box-sizing: border-box;
+}
+
+.arrival-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 auto 24px;
+  max-width: 1180px;
+}
+
+.arrival-eyebrow {
+  color: var(--arrival-blue);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.arrival-header h1 {
+  margin: 6px 0 4px;
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1.2;
+  font-weight: 800;
+}
+
+.arrival-header p,
+.arrival-section-heading p {
+  color: var(--arrival-muted);
+  margin: 0;
+  font-size: 14px;
+}
+
+.arrival-back {
+  border: 1px solid var(--arrival-line);
+  background: #fff;
+  color: var(--arrival-ink);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.arrival-home {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  max-width: 1180px;
+  margin: 30px auto;
+}
+
+.arrival-module-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 230px;
+  padding: 26px;
+  text-align: left;
+  border: 1px solid var(--arrival-line);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(20, 35, 60, .06);
+  cursor: pointer;
+  transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+
+.arrival-module-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 30px rgba(20, 35, 60, .10);
+  border-color: #b9c9df;
+}
+
+.arrival-card-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 22px;
+  border-radius: 14px;
+  background: #edf3ff;
+  color: var(--arrival-blue);
+  font-size: 27px;
+  font-weight: 800;
+}
+
+.arrival-module-card--unloading .arrival-card-icon {
+  color: var(--arrival-green);
+  background: #eaf6ef;
+}
+
+.arrival-card-title {
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 850;
+}
+
+.arrival-card-description {
+  margin-top: 8px;
+  color: var(--arrival-muted);
+  font-size: 13px;
+}
+
+.arrival-card-open {
+  margin-top: auto;
+  padding-top: 22px;
+  color: var(--arrival-blue);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.arrival-workspace {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.arrival-section-heading {
+  margin-bottom: 18px;
+}
+
+.arrival-section-heading h2 {
+  margin: 6px 0;
+  font-size: 23px;
+}
+
+.arrival-panel {
+  padding: 22px;
+  margin-bottom: 16px;
+  border: 1px solid var(--arrival-line);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.arrival-panel h3 {
+  margin: 0 0 18px;
+  font-size: 16px;
+}
+
+.arrival-two-files {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.arrival-file-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.arrival-file-picker__label,
+.arrival-date-field label {
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.arrival-file-picker__control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--arrival-line);
+  border-radius: 10px;
+  background: #fbfcfe;
+  overflow: hidden;
+}
+
+.arrival-file-picker__button {
+  flex: 0 0 auto;
+  padding: 8px 11px;
+  border-radius: 7px;
+  color: #fff;
+  background: var(--arrival-blue);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.arrival-file-picker__name {
+  overflow: hidden;
+  color: var(--arrival-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arrival-file-picker input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.arrival-file-picker small,
+.arrival-date-field small {
+  color: var(--arrival-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.arrival-date-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: min(260px, 100%);
+  margin-top: 20px;
+}
+
+.arrival-date-field input {
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--arrival-line);
+  border-radius: 9px;
+  color: var(--arrival-ink);
+  background: #fff;
+  font: inherit;
+}
+
+.arrival-workbook-info {
+  padding: 12px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.arrival-workbook-info > strong {
+  font-size: 13px;
+}
+
+.arrival-sheet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.arrival-sheet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid var(--arrival-line);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--arrival-muted);
+  font-size: 11px;
+}
+
+.arrival-sheet-chip b {
+  color: var(--arrival-ink);
+}
+
+.arrival-note {
+  padding: 16px 18px;
+  border-left: 4px solid var(--arrival-green);
+  border-radius: 10px;
+  background: #edf7f1;
+}
+
+.arrival-note strong {
+  font-size: 13px;
+}
+
+.arrival-note p {
+  margin: 6px 0 0;
+  color: #3f5c4b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.arrival-status,
+.arrival-error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.arrival-status {
+  color: #174b80;
+  background: #edf5ff;
+}
+
+.arrival-status--muted {
+  color: var(--arrival-muted);
+  background: #eef1f5;
+  line-height: 1.55;
+}
+
+.arrival-error {
+  color: #9f2626;
+  background: #fff0f0;
+}
+
+@media (max-width: 720px) {
+  .arrival-management {
+    padding: 16px;
+  }
+
+  .arrival-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .arrival-home,
+  .arrival-two-files {
+    grid-template-columns: 1fr;
+  }
+
+  .arrival-module-card {
+    min-height: 195px;
+    padding: 21px;
+  }
+
+  .arrival-panel {
+    padding: 16px;
+  }
+}
+/* Arrival Management styles - scoped to .arrival-management */
+.arrival-management{--arrival-ink:#172033;--arrival-muted:#687386;--arrival-line:#d8dee8;--arrival-bg:#f5f7fb;--arrival-blue:#2457a7;--arrival-green:#18794e;color:var(--arrival-ink);width:100%;min-height:100%;padding:24px;box-sizing:border-box;background:var(--arrival-bg);font-family:inherit}
+.arrival-management *{box-sizing:border-box}.arrival-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 auto 24px;max-width:1250px}
+.arrival-eyebrow{color:var(--arrival-blue);font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}
+.arrival-header h1{margin:6px 0 4px;font-size:clamp(22px,3vw,30px);line-height:1.2;font-weight:800}.arrival-header p,.arrival-section-heading p{color:var(--arrival-muted);margin:0;font-size:14px}
+.arrival-back,.arrival-action{border:1px solid var(--arrival-line);background:#fff;color:var(--arrival-ink);border-radius:9px;padding:10px 14px;font-weight:750;cursor:pointer}
+.arrival-home{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;max-width:1250px;margin:30px auto}
+.arrival-module-card{display:flex;flex-direction:column;align-items:flex-start;min-height:220px;padding:26px;text-align:left;border:1px solid var(--arrival-line);border-radius:18px;background:#fff;box-shadow:0 8px 24px #14233c10;cursor:pointer;transition:.16s}
+.arrival-module-card:hover{transform:translateY(-3px);box-shadow:0 14px 30px #14233c19}.arrival-card-icon{display:grid;place-items:center;width:48px;height:48px;margin-bottom:22px;border-radius:14px;background:#edf3ff;color:var(--arrival-blue);font-size:27px;font-weight:800}
+.arrival-module-card--unloading .arrival-card-icon{color:var(--arrival-green);background:#eaf6ef}.arrival-card-title{font-size:18px;font-weight:850}.arrival-card-description{margin-top:8px;color:var(--arrival-muted);font-size:13px}.arrival-card-open{margin-top:auto;padding-top:22px;color:var(--arrival-blue);font-size:13px;font-weight:800}
+.arrival-workspace{max-width:1250px;margin:0 auto}.arrival-section-heading{margin-bottom:18px}.arrival-section-heading h2{margin:6px 0;font-size:23px}
+.arrival-panel{padding:20px;margin-bottom:16px;border:1px solid var(--arrival-line);border-radius:15px;background:#fff}.arrival-panel h3{margin:0 0 16px;font-size:16px}
+.arrival-two-files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.arrival-file-picker{display:flex;flex-direction:column;gap:8px;min-width:0}.arrival-file-picker__label{font-size:13px;font-weight:750}
+.arrival-file-picker__control{display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 10px;border:1px solid var(--arrival-line);border-radius:10px;background:#fbfcfe;overflow:hidden}
+.arrival-file-picker__button{flex:0 0 auto;padding:8px 11px;border-radius:7px;color:#fff;background:var(--arrival-blue);font-size:12px;font-weight:750}.arrival-file-picker__name{overflow:hidden;color:var(--arrival-muted);font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+.arrival-file-picker input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+.arrival-date-field{display:flex;flex-direction:column;gap:7px;width:min(260px,100%);margin-top:18px;font-size:13px;font-weight:750}.arrival-date-field input,.arrival-manual-form input,.arrival-manual-form select{min-height:38px;padding:7px 9px;border:1px solid var(--arrival-line);border-radius:8px;background:#fff;color:var(--arrival-ink);font:inherit;min-width:0}
+.arrival-status,.arrival-error{margin-top:12px;padding:12px 14px;border-radius:9px;font-size:12px}.arrival-status{color:#174b80;background:#edf5ff}.arrival-error{color:#9f2626;background:#fff0f0}
+.arrival-toolbar{display:flex;flex-wrap:wrap;gap:9px;margin:14px 0}.arrival-action{font-size:12px}.arrival-action--primary{background:var(--arrival-blue);color:white;border-color:var(--arrival-blue)}.arrival-action:disabled{opacity:.45;cursor:not-allowed}
+.arrival-summary-strip{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:14px 0}.arrival-summary-strip>div{padding:13px;border:1px solid var(--arrival-line);border-radius:11px;background:#fff;display:flex;flex-direction:column;gap:5px}.arrival-summary-strip span{font-size:11px;color:var(--arrival-muted)}.arrival-summary-strip b{font-size:19px}
+.arrival-card-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.arrival-data-card{display:block;min-width:0;padding:14px;border:1px solid var(--arrival-line);border-radius:12px;background:#fff;box-shadow:0 3px 12px #18263b0b}
+.arrival-data-card__top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;padding-bottom:9px;border-bottom:1px solid var(--arrival-line);font-size:12px}.arrival-data-card__top strong{color:var(--arrival-green)}.arrival-data-card__top button{border:0;border-radius:6px;padding:5px 8px;background:#fff0f0;color:#a22;font-size:11px;cursor:pointer}
+.arrival-data-field{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:5px 0;border-bottom:1px dashed #e9edf2;font-size:12px}.arrival-data-field span{color:var(--arrival-muted);flex:0 0 82px}.arrival-data-field b{text-align:right;overflow-wrap:anywhere;font-weight:650}
+.arrival-select-card{cursor:pointer}.arrival-select-card input{width:17px;height:17px;accent-color:var(--arrival-blue)}.arrival-help{font-size:12px;color:var(--arrival-muted)}
+.arrival-manual-form{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;align-items:end}.arrival-manual-form label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700}
+.arrival-edit-field{align-items:center}.arrival-edit-field input{width:min(65%,220px);min-width:0;border:1px solid #e2e7ef;border-radius:6px;padding:5px 7px;font:inherit;text-align:right;color:var(--arrival-ink)}
+.arrival-report-preview{display:grid;gap:22px;overflow:auto}.arrival-print-report{background:#fff;color:#111;padding:18px;min-width:900px;max-width:1150px;margin:0 auto;font-family:Arial,sans-serif}
+.arrival-report-title{text-align:center;font-size:18px;font-weight:700;margin:0 0 4px}.arrival-report-subtitle{text-align:center;font-size:13px;font-weight:700;margin-bottom:7px}.arrival-report-date{text-align:right;font-size:12px;font-weight:700;margin-bottom:4px}
+.arrival-print-section{margin:0}.arrival-print-band{text-align:center;border:2px solid #111;padding:4px;font-size:13px;font-weight:700}
+.arrival-report-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10px}.arrival-report-table th,.arrival-report-table td{border:1px solid #333;padding:5px 3px;text-align:center;overflow-wrap:anywhere;vertical-align:middle}.arrival-report-table th{background:#b9cde5;font-weight:700}.arrival-report-table th:first-child,.arrival-report-table td:first-child{width:3%}.arrival-report-table tfoot td{font-weight:700}.arrival-blank-row td{height:22px}.arrival-summary-totals{width:58%;margin:0 auto;border-collapse:collapse;table-layout:fixed;font-size:15px}.arrival-summary-totals td,.arrival-summary-totals th{border:1px solid #333;padding:3px 8px;text-align:center}.arrival-summary-totals tr:nth-child(3){border-top:2px solid #111;border-bottom:2px solid #111}
+@media(max-width:950px){.arrival-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.arrival-manual-form{grid-template-columns:repeat(3,minmax(0,1fr))}.arrival-summary-strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:650px){.arrival-management{padding:14px}.arrival-header{align-items:flex-start;flex-direction:column}.arrival-home,.arrival-two-files,.arrival-card-grid{grid-template-columns:1fr}.arrival-module-card{min-height:190px;padding:20px}.arrival-panel{padding:15px}.arrival-manual-form{grid-template-columns:repeat(2,minmax(0,1fr))}.arrival-summary-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.arrival-print-report{min-width:850px}}
+.arrival-grand-total {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin: 0;
+}
+
+.arrival-grand-total td {
+  border: 1px solid #222;
+  text-align: center;
+  vertical-align: middle;
+  font-weight: 600 !important;
+  padding: 3px 2px;
+  line-height: 1.05;
+  border-top: 1.5px solid #111;
+  border-bottom: 1.5px solid #111;
+}
+.arrival-grand-total-row td {
+  font-weight: 600 !important;
+  -webkit-text-stroke: 0.5px black;
+}

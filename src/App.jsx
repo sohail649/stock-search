@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import Reconciliation from "./Reconciliation.jsx";
+import ArrivalManagement from "./ArrivalManagement.jsx";
 import AuthGate from "./AuthGate.jsx";
 import AccessManagement from "./AccessManagement.jsx";
 import {
@@ -1181,6 +1182,10 @@ function StockApp({ user, accessProfile, isSuperAdmin, onSignOut }) {
     return <Reconciliation onHome={() => setCurrentView("home")} />;
   }
 
+if (currentView === "arrival") {
+  return <ArrivalManagement onHome={() => setCurrentView("home")} />;
+}
+
   if (currentView === "access" && (isSuperAdmin || accessProfile?.role === "admin")) {
     return (
       <AccessManagement
@@ -1311,6 +1316,17 @@ function StockApp({ user, accessProfile, isSuperAdmin, onSignOut }) {
               <span className="workspace-arrow">↗</span>
               <span className="workspace-title">Reconciliation</span>
               <span className="workspace-subtitle">Compare Issuance and ERP Excel</span>
+              <span className="card-shine"></span>
+            </button>
+            <button
+              className="workspace-card card-summary"
+              onClick={() => setCurrentView("arrival")}
+              type="button"
+            >
+              <span className="workspace-icon">🚚</span>
+              <span className="workspace-arrow">↗</span>
+              <span className="workspace-title">Arrival Management</span>
+              <span className="workspace-subtitle">Manage arrival stock and unloading</span>
               <span className="card-shine"></span>
             </button>
           </div>
