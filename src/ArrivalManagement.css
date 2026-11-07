@@ -388,3 +388,50 @@
   font-weight: 600 !important;
   -webkit-text-stroke: 0.5px black;
 }
+/* SUMMARY REPORT - BORDER FIX */
+.arrival-print-report:has(.arrival-summary-totals)
+.arrival-print-section .arrival-report-table {
+  border: 2px solid #111 !important;
+}
+
+/* OWN / COMMERCIAL TABLE OUTER BORDER */
+.arrival-print-report:has(.arrival-summary-totals)
+.arrival-print-section {
+  border: 2px solid #111 !important;
+  margin-bottom: 5px;
+}
+
+/* SUMMARY TABLE */
+.arrival-summary-totals {
+  border: 2px solid #111 !important;
+  border-collapse: collapse !important;
+  width: 58%;
+  margin: 12px auto !important;
+}
+
+/* SUMMARY ALL CELLS */
+.arrival-summary-totals td,
+.arrival-summary-totals th {
+  border: 1.5px solid #111 !important;
+  padding: 5px 8px !important;
+  text-align: center;
+  font-weight: 700 !important;
+}
+
+/* B/R/T aur VEHICLES ke darmiyan vertical line remove */
+.arrival-summary-totals td:nth-child(3),
+.arrival-summary-totals th:nth-child(3) {
+  border-right: 0 !important;
+}
+
+.arrival-summary-totals td:nth-child(4),
+.arrival-summary-totals th:nth-child(4) {
+  border-left: 0 !important;
+}
+
+/* TOTAL aur GRAND TOTAL ki horizontal lines */
+.arrival-summary-totals tr:nth-child(3),
+.arrival-summary-totals tr:last-child {
+  border-top: 2px solid #111 !important;
+  border-bottom: 2px solid #111 !important;
+}

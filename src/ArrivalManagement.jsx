@@ -55,11 +55,11 @@ function normalizeDateForFilter(value) {
     }
   }
 
-  // Common Excel date format in Pakistan: DD/MM/YYYY or DD-MM-YYYY.
-  match = text.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/);
+  // UNLOADING date string is M/D/YYYY (e.g. 11/7/2026 = 7 Nov 2026).
+  match = text.match(/^(\d{1,2})[/ .\-](\d{1,2})[/ .\-](\d{2,4})$/);
   if (match) {
-    const day = Number(match[1]);
-    const month = Number(match[2]);
+    const month = Number(match[1]);
+    const day = Number(match[2]);
     const year = match[3].length === 2 ? `20${match[3]}` : match[3];
     if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
       return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -74,8 +74,8 @@ function normalizeDateForFilter(value) {
   return "";
 }
 
-// DAILY GREIGE ARRIVAL heading uses Excel's M/D/YYYY date style,
-// e.g. 11/4/2026 means 4 November 2026 in the supplied workbook.
+// UNLOADING J2 date uses M/D/YYYY format.
+// Example: 11/7/2026 means 7 November 2026 (month first, day second).
 function parseDailyArrivalDate(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
@@ -90,7 +90,7 @@ function parseDailyArrivalDate(value) {
   const text = clean(value);
   if (!text) return "";
 
-  // M/D/YYYY (e.g. 11/4/2026 = 4 November 2026).
+  // M/D/YYYY (e.g. 11/7/2026 = 7 November 2026).
   // Date ke sath cell mein extra text ho tab bhi date extract ho jaye.
   const match = text.match(/(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/);
   if (match) {
@@ -98,7 +98,7 @@ function parseDailyArrivalDate(value) {
     const day = Number(match[2]);
     const year = Number(match[3]);
 
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
       return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     }
   }
@@ -475,7 +475,7 @@ function dateLabel(date) {
   if (!date) return "";
 
   const [y, m, d] = date.split("-");
-  return `${Number(m)}/${Number(d)}/${y}`;
+  return `${Number(d)}/${Number(m)}/${y}`;
 }
 
 function downloadBlob(blob, name) {
@@ -495,6 +495,7 @@ function downloadBlob(blob, name) {
 // --------------------------------------------------
 // REPORT TABLE
 // --------------------------------------------------
+
 
 function ReportTable({
   rows,
@@ -555,13 +556,23 @@ function ReportTable({
 
         <tfoot>
           <tr className="arrival-section-total">
-            <td colSpan={7}>
-              {type === "OWN" ? "Own Total" : "Cmt Total"}
-            </td>
-            <td>{meterTotal.toLocaleString()}</td>
-            <td colSpan={2}>
-              {vehicles} VEHICLES
-            </td>
+            {summary ? (
+              <>
+                <td colSpan={6}>
+                  {type === "OWN" ? "Own Total" : "Cmt Total"}
+                </td>
+                <td>{meterTotal.toLocaleString()}</td>
+                <td colSpan={2}>{vehicles} VEHICLES</td>
+              </>
+            ) : (
+              <>
+                <td colSpan={7}>
+                  {type === "OWN" ? "Own Total" : "Cmt Total"}
+                </td>
+                <td>{meterTotal.toLocaleString()}</td>
+                <td colSpan={2}>{vehicles} VEHICLES</td>
+              </>
+            )}
           </tr>
         </tfoot>
       </table>
@@ -600,6 +611,7 @@ export default function ArrivalManagement({ onHome }) {
   };
   const [stockFilterDraft, setStockFilterDraft] = useState({ ...EMPTY_STOCK_FILTERS });
   const [stockFilters, setStockFilters] = useState({ ...EMPTY_STOCK_FILTERS });
+  const [showStockDateWiseTotals, setShowStockDateWiseTotals] = useState(false);
 
   const [manual, setManual] = useState({ ...EMPTY_ROW });
 
@@ -718,6 +730,42 @@ export default function ArrivalManagement({ onHome }) {
       if (!dateKey) return latest;
       return !latest || dateKey > latest ? dateKey : latest;
     }, "");
+  }, [stockRows]);
+
+  // Arrival Stock ke overall OWN / Commercial / Grand meter totals.
+  const stockMeterTotals = useMemo(() => {
+    const own = stockRows
+      .filter((row) => row.type === "OWN")
+      .reduce((sum, row) => sum + number(row.meter), 0);
+    const commercial = stockRows
+      .filter((row) => row.type !== "OWN")
+      .reduce((sum, row) => sum + number(row.meter), 0);
+
+    return { own, commercial, total: own + commercial };
+  }, [stockRows]);
+
+  // Date-wise OWN / Commercial / Grand totals; latest date appears first.
+  const stockDateWiseTotals = useMemo(() => {
+    const grouped = new Map();
+
+    stockRows.forEach((row) => {
+      const dateKey = normalizeDateForFilter(row.date) || "undated";
+      if (!grouped.has(dateKey)) {
+        grouped.set(dateKey, { dateKey, own: 0, commercial: 0, total: 0 });
+      }
+
+      const item = grouped.get(dateKey);
+      const meters = number(row.meter);
+      if (row.type === "OWN") item.own += meters;
+      else item.commercial += meters;
+      item.total += meters;
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      if (a.dateKey === "undated") return 1;
+      if (b.dateKey === "undated") return -1;
+      return b.dateKey.localeCompare(a.dateKey);
+    });
   }, [stockRows]);
 
   // Auto Add list bhi Stock ki tarah date-wise latest-first rahegi.
@@ -1076,11 +1124,13 @@ export default function ArrivalManagement({ onHome }) {
 
       // Same file ki STOCK sheet Arrival Stock mein aur UNLOADING sheet
       // Unloading / Summary mein load hoti hai. Empty unloading rows allowed hain.
- const unloadingDateRaw =
-  unloadingSheet?.[1]?.[9] ||
-  book.sheetObjects?.UNLOADING?.J2?.v ||
-  book.sheetObjects?.UNLOADING?.J2?.w ||
-  "";
+ const unloadingJ2 = book.sheetObjects?.UNLOADING?.J2;
+ const unloadingDateRaw = [
+  unloadingJ2?.v,
+  unloadingJ2?.w,
+  unloadingJ2?.h,
+  unloadingSheet?.[1]?.[9],
+].find((value) => value !== undefined && value !== null && clean(value) !== "") ?? "";
 
 const unloadingSheetDate =
   parseDailyArrivalDate(unloadingDateRaw) ||
@@ -1183,8 +1233,8 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
 
       clone = target.cloneNode(true);
 
-      clone.style.width = "max-content";
-      clone.style.minWidth = "1100px";
+      clone.style.width = kind === "summary" ? "1200px" : "max-content";
+      clone.style.minWidth = kind === "summary" ? "1200px" : "1100px";
       clone.style.maxWidth = "none";
       clone.style.padding = "24px";
       clone.style.background = "#fff";
@@ -1198,21 +1248,21 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
 
       // Tables ko content ke mutabiq auto width dein
       clone.querySelectorAll(".arrival-report-table").forEach((table) => {
-        table.style.tableLayout = "auto";
-        table.style.width = "max-content";
-        table.style.minWidth = "100%";
+        table.style.tableLayout = kind === "summary" ? "fixed" : "auto";
+        table.style.width = kind === "summary" ? "100%" : "max-content";
+        table.style.minWidth = kind === "summary" ? "0" : "100%";
         table.style.maxWidth = "none";
         table.style.borderCollapse = "collapse";
 
         table.querySelectorAll("th, td").forEach((cell) => {
-          cell.style.whiteSpace = "nowrap";
-          cell.style.wordBreak = "normal";
-          cell.style.overflowWrap = "normal";
+          cell.style.whiteSpace = kind === "summary" ? "normal" : "nowrap";
+          cell.style.wordBreak = kind === "summary" ? "break-word" : "normal";
+          cell.style.overflowWrap = kind === "summary" ? "anywhere" : "normal";
           cell.style.width = "auto";
           cell.style.height = "auto";
           cell.style.padding = "4px 8px";
           cell.style.lineHeight = "1.2";
-          cell.style.fontSize = "11px";
+          cell.style.fontSize = "13px";
         });
 
         // Summary aur Unloading mein Weave column ki position alag hai
@@ -1222,6 +1272,22 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
         const weaveColumn = isSummary ? 5 : 6;
         const brtColumn = isSummary ? 6 : 7;
         const meterColumn = isSummary ? 7 : 8;
+
+        // Summary image: columns ko fixed proportions dein taa-ke
+        // long supplier/remarks/weave text poori image ko wide na kare.
+        if (kind === "summary") {
+          const summaryColumnWidths = ["3%", "15%", "12%", "6%", "18%", "8%", "10%", "12%", "16%"];
+          table.querySelectorAll("thead tr, tbody tr").forEach((row) => {
+            row.querySelectorAll("th, td").forEach((cell, index) => {
+              const width = summaryColumnWidths[index];
+              if (width) {
+                cell.style.width = width;
+                cell.style.minWidth = "0";
+                cell.style.maxWidth = width;
+              }
+            });
+          });
+        }
 
         // Width compact
         table.querySelectorAll(
@@ -1261,31 +1327,97 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
         });
       });
 
+      // Summary totals ko reference image ki tarah compact aur center mein rakhein.
+      // Inline !important styles existing app CSS ke full-width table rules ko override karte hain.
+      if (kind === "summary") {
+        const totalsTable = clone.querySelector(".arrival-summary-totals");
+
+        if (totalsTable) {
+          totalsTable.style.setProperty("display", "table", "important");
+          totalsTable.style.setProperty("width", "58%", "important");
+          totalsTable.style.setProperty("min-width", "0", "important");
+          totalsTable.style.setProperty("max-width", "58%", "important");
+          totalsTable.style.setProperty("margin-left", "auto", "important");
+          totalsTable.style.setProperty("margin-right", "auto", "important");
+          totalsTable.style.setProperty("table-layout", "fixed", "important");
+          totalsTable.style.setProperty("border-collapse", "collapse", "important");
+
+          const summaryWidths = ["31%", "39%", "13%", "17%"];
+          totalsTable.querySelectorAll("tr").forEach((row) => {
+            row.querySelectorAll("td, th").forEach((cell, index) => {
+              if (summaryWidths[index]) {
+                cell.style.setProperty("width", summaryWidths[index], "important");
+                cell.style.setProperty("min-width", "0", "important");
+                cell.style.setProperty("max-width", summaryWidths[index], "important");
+                cell.style.setProperty("white-space", "nowrap", "important");
+              }
+            });
+          });
+        }
+      }
+
+      clone.querySelectorAll(".arrival-summary-totals td, .arrival-summary-totals th").forEach((cell) => {
+        cell.style.fontSize = "12px";
+      });
+
+      clone.querySelectorAll(".arrival-grand-total-row td").forEach((cell) => {
+        cell.style.fontSize = "13px";
+        cell.style.fontWeight = "900";
+      });
+
+      clone.querySelectorAll(".arrival-section-total td").forEach((cell) => {
+        cell.style.fontSize = "13px";
+        cell.style.fontWeight = "900";
+      });
+
       clone.querySelectorAll("tr").forEach((row) => {
         row.style.height = "auto";
       });
 
+      // Summary image ko browser ki canvas limit se bachane ke liye
+      // output dimensions ke mutabiq scale automatically adjust karein.
+      const exportWidth = Math.max(clone.scrollWidth, clone.offsetWidth, 1);
+      const exportHeight = Math.max(clone.scrollHeight, clone.offsetHeight, 1);
+      const summaryScale = Math.min(
+        2,
+        2400 / exportWidth,
+        16000 / exportHeight,
+        Math.sqrt(80000000 / (exportWidth * exportHeight))
+      );
+
       const canvas = await html2canvas(clone, {
-        scale: 2,
+        scale: kind === "summary" ? summaryScale : 2,
         backgroundColor: "#ffffff",
         useCORS: true,
         logging: false,
         scrollX: 0,
         scrollY: 0,
-        windowWidth: Math.max(1200, clone.scrollWidth),
-        windowHeight: clone.scrollHeight,
+        windowWidth: Math.max(1200, exportWidth),
+        windowHeight: exportHeight,
       });
 
-      canvas.toBlob((png) => {
-        if (png) {
-          downloadBlob(
-            png,
-            `Arrival-${kind}-${reportDate}.png`
-          );
-        } else {
-          setError("Image create nahi ho saki.");
+      if (kind === "summary") {
+        const png = await new Promise((resolve) => {
+          canvas.toBlob(resolve, "image/png");
+        });
+
+        if (!png) {
+          throw new Error("Summary image create nahi ho saki.");
         }
-      }, "image/png");
+
+        downloadBlob(png, `Arrival-${kind}-${reportDate}.png`);
+      } else {
+        canvas.toBlob((png) => {
+          if (png) {
+            downloadBlob(
+              png,
+              `Arrival-${kind}-${reportDate}.png`
+            );
+          } else {
+            setError("Image create nahi ho saki.");
+          }
+        }, "image/png");
+      }
     } catch (err) {
       console.error("Image export error:", err);
       setError("Image download nahi ho saki. Dobara try karein.");
@@ -1404,7 +1536,7 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
         border-collapse: collapse;
         table-layout: fixed;
         margin: 0;
-        font-size: 7px;
+        font-size: 9px;
       }
 
       .arrival-report-table th,
@@ -1424,12 +1556,15 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
       }
 
       .arrival-report-table tfoot td {
-        font-weight: 700;
+        font-size: 9px;
+        font-weight: 900;
         padding-top: 3px;
         padding-bottom: 3px;
       }
 
       .arrival-section-total td {
+        font-size: 9px;
+        font-weight: 900;
         border-top: 1.5px solid #111;
         border-bottom: 1.5px solid #111;
       }
@@ -1438,12 +1573,17 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
         height: 8px;
       }
 
+      .arrival-grand-total-row td {
+        font-size: 9px;
+        font-weight: 900;
+      }
+
       .arrival-summary-totals {
         width: 58%;
         margin: 0 auto;
         border-collapse: collapse;
         table-layout: fixed;
-        font-size: 10px;
+        font-size: 12px;
       }
 
       .arrival-summary-totals td,
@@ -1639,31 +1779,7 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
           vehicles={cmtVehicles}
         />
 
-        {!summary && (
-          <table className="arrival-report-table arrival-grand-total">
-            <colgroup>
-              <col style={{ width: "3%" }} />
-              <col style={{ width: "10%" }} />
-              <col style={{ width: "10%" }} />
-              <col style={{ width: "11%" }} />
-              <col style={{ width: "5%" }} />
-              <col style={{ width: "21%" }} />
-              <col style={{ width: "6%" }} />
-              <col style={{ width: "7%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "15%" }} />
-            </colgroup>
-            <tbody>
-              <tr className="arrival-grand-total-row">
-                <td colSpan={6}>Grand Total</td>
-                <td colSpan={2}>{totalMeters.toLocaleString()}</td>
-                <td colSpan={2}>{vehicles} VEHICLES</td>
-              </tr>
-            </tbody>
-          </table>
-        )}
-
-        {summary && (
+ {summary && (
           <table className="arrival-summary-totals">
             <tbody>
               <tr>
@@ -1913,6 +2029,107 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
 
           {section === "stock" && (
             <div className="arrival-panel">
+              <div
+                className="arrival-stock-total-summary"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+                  gap: "12px",
+                  marginBottom: "16px",
+                }}
+              >
+                {[
+                  { label: "OWN TOTAL METERS", value: stockMeterTotals.own, color: "#1d4ed8", bg: "#eff6ff" },
+                  { label: "COMMERCIAL TOTAL METERS", value: stockMeterTotals.commercial, color: "#c2410c", bg: "#fff7ed" },
+                  { label: "GRAND TOTAL METERS", value: stockMeterTotals.total, color: "#166534", bg: "#f0fdf4" },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    style={{
+                      padding: "15px 16px",
+                      borderRadius: "12px",
+                      border: `2px solid ${item.color}33`,
+                      background: item.bg,
+                      minWidth: 0,
+                    }}
+                  >
+                    <div style={{ color: item.color, fontSize: "0.78rem", fontWeight: 900, letterSpacing: "0.03em" }}>
+                      {item.label}
+                    </div>
+                    <div style={{ color: item.color, fontSize: "1.55rem", fontWeight: 900, marginTop: "5px" }}>
+                      {item.value.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ marginBottom: "18px" }}>
+                <button
+                  type="button"
+                  className="arrival-action arrival-action--primary"
+                  onClick={() => setShowStockDateWiseTotals((value) => !value)}
+                  aria-expanded={showStockDateWiseTotals}
+                >
+                  {showStockDateWiseTotals ? "Hide Date Wise Total" : "Date Wise Total"}
+                </button>
+              </div>
+
+              {showStockDateWiseTotals && (
+                <div
+                  className="arrival-stock-date-total-wrap"
+                  style={{
+                    overflowX: "auto",
+                    marginBottom: "20px",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: "12px",
+                  }}
+                >
+                  <table style={{ width: "100%", minWidth: "560px", borderCollapse: "collapse", background: "#ffffff" }}>
+                    <thead>
+                      <tr style={{ background: "#334155", color: "#ffffff" }}>
+                        {["Date", "OWN Meters", "Commercial Meters", "Total Meters"].map((heading) => (
+                          <th key={heading} style={{ padding: "11px 12px", textAlign: heading === "Date" ? "left" : "right", whiteSpace: "nowrap" }}>
+                            {heading}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stockDateWiseTotals.map((item) => (
+                        <tr key={item.dateKey} style={{ borderTop: "1px solid #e2e8f0" }}>
+                          <td style={{ padding: "10px 12px", fontWeight: 800 }}>
+                            {item.dateKey === "undated" ? "Date Not Available" : formatStockDate(item.dateKey)}
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#1d4ed8", fontWeight: 700 }}>
+                            {item.own.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#c2410c", fontWeight: 700 }}>
+                            {item.commercial.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#166534", fontWeight: 900 }}>
+                            {item.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ background: "#f1f5f9", borderTop: "2px solid #94a3b8" }}>
+                        <td style={{ padding: "11px 12px", fontWeight: 900 }}>Grand Total</td>
+                        <td style={{ padding: "11px 12px", textAlign: "right", color: "#1d4ed8", fontWeight: 900 }}>
+                          {stockMeterTotals.own.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </td>
+                        <td style={{ padding: "11px 12px", textAlign: "right", color: "#c2410c", fontWeight: 900 }}>
+                          {stockMeterTotals.commercial.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </td>
+                        <td style={{ padding: "11px 12px", textAlign: "right", color: "#166534", fontWeight: 900 }}>
+                          {stockMeterTotals.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+
               <h3>
                 Available Stock Cards ({filteredStockRows.length} / {stockRows.length})
               </h3>
@@ -2290,6 +2507,25 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
                     are excluded using their stock details and vehicle.
                   </p>
 
+                  <button
+                    type="button"
+                    className="arrival-action arrival-action--primary"
+                    disabled={!selected.length}
+                    onClick={addSelected}
+                    style={{
+                      marginBottom: "14px",
+                      fontWeight: 900,
+                      minHeight: "44px",
+                      width: "100%",
+                      position: "sticky",
+                      bottom: "10px",
+                      zIndex: 20,
+                      boxShadow: "0 4px 14px rgba(0,0,0,0.22)",
+                    }}
+                  >
+                    Add Selected to Unloading Sheet ({selected.length})
+                  </button>
+
                   {availableDateGroups.length === 0 ? (
                     <div className="arrival-status">
                       Koi available stock record nahi mila.
@@ -2515,14 +2751,6 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
                     </div>
                   )}
 
-                  <button
-                    type="button"
-                    className="arrival-action arrival-action--primary"
-                    disabled={!selected.length}
-                    onClick={addSelected}
-                  >
-                    Add selected ({selected.length}) to Unloading
-                  </button>
                 </div>
               )}
 
@@ -2647,9 +2875,9 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
                 </form>
               </div>
 
-              {/* DATE-WISE UNLOADING CARDS — latest date first */}
+              {/* UNLOADING CARDS */}
               <div className="arrival-panel">
-                <h3>Unloading Cards — Date Wise ({rows.length})</h3>
+                <h3>Unloading Cards ({rows.length})</h3>
 
                 {unloadingDateGroups.length === 0 ? (
                   <div className="arrival-status">
@@ -2679,48 +2907,7 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
                               : "0 3px 12px rgba(15, 23, 42, 0.05)",
                           }}
                         >
-                          <div
-                            className="arrival-stock-date-heading-wrap"
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              flexWrap: "wrap",
-                              gap: "10px",
-                              padding: "10px 14px",
-                              marginBottom: "14px",
-                              borderRadius: "10px",
-                              background: isLatestDate ? "#78350f" : "#334155",
-                              color: "#ffffff",
-                              borderLeft: isLatestDate ? "6px solid #fbbf24" : "6px solid #94a3b8",
-                            }}
-                          >
-                            <h3
-                              className="arrival-stock-date-heading"
-                              style={{ color: "#ffffff", margin: 0, fontSize: "1.15rem", fontWeight: 800 }}
-                            >
-                              {group.label}
-                            </h3>
-                            {isLatestDate && (
-                              <span
-                                className="arrival-stock-latest-badge"
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: "6px",
-                                  padding: "6px 11px",
-                                  borderRadius: "999px",
-                                  background: "#fbbf24",
-                                  color: "#451a03",
-                                  fontSize: "0.75rem",
-                                  fontWeight: 900,
-                                  letterSpacing: "0.04em",
-                                }}
-                              >
-                                ★ LATEST ARRIVAL
-                              </span>
-                            )}
-                          </div>
+
 
                           {group.ownRows.length > 0 && (
                             <section
