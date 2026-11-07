@@ -74,6 +74,169 @@ function normalizeDateForFilter(value) {
   return "";
 }
 
+// DAILY GREIGE ARRIVAL heading uses Excel's M/D/YYYY date style,
+// e.g. 11/4/2026 means 4 November 2026 in the supplied workbook.
+function parseDailyArrivalDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  }
+
+  // Excel kabhi date ko serial number ki form mein return karta hai.
+  if (typeof value === "number" && Number.isFinite(value) && value > 20000 && value < 80000) {
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86400000);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+  }
+
+  const text = clean(value);
+  if (!text) return "";
+
+  // M/D/YYYY (e.g. 11/4/2026 = 4 November 2026).
+  // Date ke sath cell mein extra text ho tab bhi date extract ho jaye.
+  const match = text.match(/(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/);
+  if (match) {
+    const month = Number(match[1]);
+    const day = Number(match[2]);
+    const year = Number(match[3]);
+
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+
+  return normalizeDateForFilter(text);
+}
+
+function getDateFromDailyHeading(
+  row,
+  headingIndex,
+  worksheet,
+  worksheetRowIndex,
+  worksheetHeadingColumn
+) {
+  if (!Array.isArray(row)) return "";
+
+  const candidates = [];
+  const merges = worksheet?.["!merges"] || [];
+  const range = worksheet?.["!ref"]
+    ? XLSX.utils.decode_range(worksheet["!ref"])
+    : { s: { r: 0, c: 0 }, e: { r: worksheetRowIndex, c: 8 } };
+
+  // Pehle original worksheet mein heading ka exact row/column dhoondhein.
+  // Is se sheet_to_json ke row-offset/blank-row differences ka asar nahi hota.
+  let actualRow = worksheetRowIndex;
+  let actualHeadingColumn = worksheetHeadingColumn;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  if (worksheet) {
+    for (let r = range.s.r; r <= range.e.r; r += 1) {
+      for (let c = range.s.c; c <= range.e.c; c += 1) {
+        const cell = worksheet[XLSX.utils.encode_cell({ r, c })];
+        const cellText = clean(cell?.v ?? cell?.w).replace(/\s+/g, " ");
+
+        if (/DAILY\s+GREIGE\s+ARRIVAL/i.test(cellText)) {
+          const distance = Math.abs(r - worksheetRowIndex);
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            actualRow = r;
+            actualHeadingColumn = c;
+          }
+        }
+      }
+    }
+  }
+
+  // Aapki sheet mein title A:F merge hai aur date usi row mein G:I merge hai.
+  // G cell (column index 6) ko explicitly check karte hain; merge metadata
+  // browser/parser ki wajah se unavailable ho tab bhi date mil sakti hai.
+  const candidateColumns = new Set([6]);
+
+  const titleMerge = merges.find(
+    (merge) =>
+      merge.s.r === actualRow &&
+      merge.s.c <= actualHeadingColumn &&
+      merge.e.c >= actualHeadingColumn
+  );
+
+  if (titleMerge) {
+    candidateColumns.add(titleMerge.e.c + 1);
+
+    // Same heading row mein date merge ya koi aur merged date cell.
+    merges
+      .filter(
+        (merge) =>
+          merge.s.r === actualRow &&
+          merge.s.c > titleMerge.e.c
+      )
+      .sort((a, b) => a.s.c - b.s.c)
+      .forEach((merge) => candidateColumns.add(merge.s.c));
+  }
+
+  // Heading ke right side ke saare actual worksheet cells bhi check hon.
+  for (
+    let c = Math.max(actualHeadingColumn + 1, range.s.c);
+    c <= range.e.c;
+    c += 1
+  ) {
+    candidateColumns.add(c);
+  }
+
+  const tryCandidate = (value) => {
+    const parsed = parseDailyArrivalDate(value);
+    if (parsed) candidates.push(parsed);
+  };
+
+  // Sab se pehle direct G cell aur merged-date anchor ko parse karein.
+  Array.from(candidateColumns)
+    .filter((c) => c >= 0 && c <= range.e.c)
+    .sort((a, b) => a - b)
+    .forEach((c) => {
+      const cell = worksheet?.[XLSX.utils.encode_cell({ r: actualRow, c })];
+      if (cell) {
+        tryCandidate(cell.v);
+        tryCandidate(cell.w);
+        tryCandidate(cell.h);
+      }
+    });
+
+  if (candidates.length) return candidates[0];
+
+  // Fallback: sheet_to_json ki usi row ke cells mein date dhoondhein.
+  row.forEach((value, index) => {
+    if (index > headingIndex) tryCandidate(value);
+  });
+  if (candidates.length) return candidates[0];
+
+  // Kuch workbooks mein date merge G:I ke bajaye adjacent right cell se start hota hai.
+  // Original raw cells ki poori row ko scan karna final fallback hai.
+  if (worksheet) {
+    for (let c = range.s.c; c <= range.e.c; c += 1) {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: actualRow, c })];
+      if (!cell) continue;
+      const parsed =
+        parseDailyArrivalDate(cell.v) ||
+        parseDailyArrivalDate(cell.w) ||
+        parseDailyArrivalDate(cell.h);
+      if (parsed) return parsed;
+    }
+  }
+
+  return parseDailyArrivalDate(row[headingIndex]);
+}
+
+function formatStockDate(dateKey) {
+  if (!dateKey || dateKey === "undated") return "Date Not Available";
+
+  const [year, month, day] = dateKey.split("-").map(Number);
+  if (!year || !month || !day) return "Date Not Available";
+
+  const date = new Date(year, month - 1, day, 12);
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
 async function readCloudChunks(subcollectionName, chunkCount) {
   if (!chunkCount) return [];
 
@@ -149,21 +312,45 @@ function parseSections(rows, kind) {
   return result;
 }
 
-function parseStockRows(rows) {
+function parseStockRows(rows, worksheet) {
   const out = [];
   let type = "OWN";
   let headers = null;
+  let currentDate = "";
+  const worksheetRange = worksheet?.["!ref"]
+    ? XLSX.utils.decode_range(worksheet["!ref"])
+    : { s: { r: 0, c: 0 } };
 
-  rows.forEach((row) => {
+  rows.forEach((row, rowIndex) => {
     const first = clean(row?.[0]).toUpperCase();
+    const dailyHeadingIndex = Array.isArray(row)
+      ? row.findIndex((value) => /DAILY\s+GREIGE\s+ARRIVAL/i.test(clean(value)))
+      : -1;
 
-    if (first === "OWN") {
+    // Date DAILY GREIGE ARRIVAL wali merged heading row se uthti hai.
+    if (dailyHeadingIndex >= 0) {
+      currentDate = getDateFromDailyHeading(
+        row,
+        dailyHeadingIndex,
+        worksheet,
+        worksheetRange.s.r + rowIndex,
+        worksheetRange.s.c + dailyHeadingIndex
+      );
+      headers = null;
+      return;
+    }
+
+    if (first === "OWN" || first === "OWN GREIGE") {
       type = "OWN";
       headers = null;
       return;
     }
 
-    if (first === "CMT" || first === "COMMERCIAL") {
+    if (
+      first === "CMT" ||
+      first === "COMMERCIAL" ||
+      first === "COMMERCIAL GREIGE"
+    ) {
       type = "CMT";
       headers = null;
       return;
@@ -187,7 +374,20 @@ function parseStockRows(rows) {
     out.push({
       ...EMPTY_ROW,
       type,
-      date: clean(get("date", "arrivaldate", "stockdate", "receiveddate", "receivingdate", "receiptdate", "dateofreceipt", "dateofarrival", "inwarddate", "challandate", "entrydate", "dated")),
+      date: currentDate || parseDailyArrivalDate(get(
+        "date",
+        "arrivaldate",
+        "stockdate",
+        "receiveddate",
+        "receivingdate",
+        "receiptdate",
+        "dateofreceipt",
+        "dateofarrival",
+        "inwarddate",
+        "challandate",
+        "entrydate",
+        "dated"
+      )),
       supplier,
       quality: clean(get("quality")),
       width: clean(get("width")),
@@ -216,19 +416,23 @@ function parseWorkbook(file) {
         });
 
         const sheets = {};
+        const sheetObjects = {};
 
         wb.SheetNames.forEach((name) => {
-          sheets[name.toUpperCase()] = XLSX.utils.sheet_to_json(
-            wb.Sheets[name],
-            {
-              header: 1,
-              defval: "",
-              raw: false,
-            }
-          );
+          const key = name.toUpperCase();
+          const worksheet = wb.Sheets[name];
+
+          sheets[key] = XLSX.utils.sheet_to_json(worksheet, {
+            header: 1,
+            defval: "",
+            raw: false,
+          });
+          // Keep raw worksheet too, because merged cells are not reliably
+          // represented by sheet_to_json. It lets us read the date in merged G:I.
+          sheetObjects[key] = worksheet;
         });
 
-        resolve({ name: file.name, sheets });
+        resolve({ name: file.name, sheets, sheetObjects });
       } catch (err) {
         reject(err);
       }
@@ -372,11 +576,9 @@ function ReportTable({
 export default function ArrivalManagement({ onHome }) {
   const [section, setSection] = useState("home");
 
+  // Home screen se sirf aik shared workbook upload hoti hai (STOCK + UNLOADING).
   const [stockFile, setStockFile] = useState(null);
-  const [previousFile, setPreviousFile] = useState(null);
-
   const [stockBook, setStockBook] = useState(null);
-  const [previousBook, setPreviousBook] = useState(null);
 
   const [stockRows, setStockRows] = useState([]);
   const [rows, setRows] = useState([]);
@@ -389,7 +591,13 @@ export default function ArrivalManagement({ onHome }) {
   const [selected, setSelected] = useState([]);
 
   // Stock filters apply only when Search is pressed.
-  const EMPTY_STOCK_FILTERS = { date: "", quality: "", supplier: "" };
+  const EMPTY_STOCK_FILTERS = {
+    date: "",
+    quality: "",
+    width: "",
+    supplier: "",
+    vehicle: "",
+  };
   const [stockFilterDraft, setStockFilterDraft] = useState({ ...EMPTY_STOCK_FILTERS });
   const [stockFilters, setStockFilters] = useState({ ...EMPTY_STOCK_FILTERS });
 
@@ -459,45 +667,135 @@ export default function ArrivalManagement({ onHome }) {
 
   const filteredStockRows = useMemo(() => {
     const dateFilter = stockFilters.date;
-    const qualityFilter = stockFilters.quality.trim().toLowerCase();
-    const supplierFilter = stockFilters.supplier.trim().toLowerCase();
+    const qualityFilter = norm(stockFilters.quality);
+    const widthFilter = norm(stockFilters.width);
+    const supplierFilter = norm(stockFilters.supplier);
+    const vehicleFilter = norm(stockFilters.vehicle);
 
     return stockRows.filter((r) => {
-      if (
-        dateFilter &&
-        normalizeDateForFilter(r.date) !== dateFilter
-      ) {
+      if (dateFilter && normalizeDateForFilter(r.date) !== dateFilter) {
         return false;
       }
 
-      if (
-        qualityFilter &&
-        !clean(r.quality).toLowerCase().includes(qualityFilter)
-      ) {
-        return false;
-      }
-
-      if (
-        supplierFilter &&
-        !clean(r.supplier).toLowerCase().includes(supplierFilter)
-      ) {
-        return false;
-      }
+      // Text filters use includes(), so text from the start, middle or end matches.
+      if (qualityFilter && !norm(r.quality).includes(qualityFilter)) return false;
+      if (widthFilter && !norm(r.width).includes(widthFilter)) return false;
+      if (supplierFilter && !norm(r.supplier).includes(supplierFilter)) return false;
+      if (vehicleFilter && !norm(r.vehicle).includes(vehicleFilter)) return false;
 
       return true;
     });
   }, [stockRows, stockFilters]);
 
+  const filteredStockGroups = useMemo(() => {
+    const groups = new Map();
+
+    filteredStockRows.forEach((row) => {
+      const dateKey = normalizeDateForFilter(row.date) || "undated";
+      if (!groups.has(dateKey)) groups.set(dateKey, []);
+      groups.get(dateKey).push(row);
+    });
+
+    return Array.from(groups.entries())
+      .map(([dateKey, groupRows]) => ({
+        dateKey,
+        label: formatStockDate(dateKey),
+        ownRows: groupRows.filter((row) => row.type === "OWN"),
+        cmtRows: groupRows.filter((row) => row.type === "CMT"),
+      }))
+      .sort((a, b) => {
+        if (a.dateKey === "undated") return 1;
+        if (b.dateKey === "undated") return -1;
+        return b.dateKey.localeCompare(a.dateKey);
+      });
+  }, [filteredStockRows]);
+
+  // Latest date poore stock data se nikalti hai, filters se nahi.
+  // Is liye purani date filter karne par usay ghalti se "Latest" mark nahi kiya jayega.
+  const latestStockDate = useMemo(() => {
+    return stockRows.reduce((latest, row) => {
+      const dateKey = normalizeDateForFilter(row.date);
+      if (!dateKey) return latest;
+      return !latest || dateKey > latest ? dateKey : latest;
+    }, "");
+  }, [stockRows]);
+
+  // Auto Add list bhi Stock ki tarah date-wise latest-first rahegi.
+  const availableDateGroups = useMemo(() => {
+    const groups = new Map();
+
+    availableRows.forEach((row) => {
+      const dateKey = normalizeDateForFilter(row.date) || "undated";
+      if (!groups.has(dateKey)) groups.set(dateKey, []);
+      groups.get(dateKey).push(row);
+    });
+
+    return Array.from(groups.entries())
+      .map(([dateKey, groupRows]) => ({
+        dateKey,
+        label: formatStockDate(dateKey),
+        ownRows: groupRows.filter((row) => row.type === "OWN"),
+        cmtRows: groupRows.filter((row) => row.type !== "OWN"),
+      }))
+      .sort((a, b) => {
+        if (a.dateKey === "undated") return 1;
+        if (b.dateKey === "undated") return -1;
+        return b.dateKey.localeCompare(a.dateKey);
+      });
+  }, [availableRows]);
+
+  const latestAvailableDate = useMemo(() => {
+    return availableRows.reduce((latest, row) => {
+      const dateKey = normalizeDateForFilter(row.date);
+      if (!dateKey) return latest;
+      return !latest || dateKey > latest ? dateKey : latest;
+    }, "");
+  }, [availableRows]);
+
+  // Unloading cards ko bhi date ke hisaab se group aur latest-first sort karein.
+  const unloadingDateGroups = useMemo(() => {
+    const groups = new Map();
+
+    rows.forEach((row) => {
+      const dateKey = normalizeDateForFilter(row.date) || "undated";
+      if (!groups.has(dateKey)) groups.set(dateKey, []);
+      groups.get(dateKey).push(row);
+    });
+
+    return Array.from(groups.entries())
+      .map(([dateKey, groupRows]) => ({
+        dateKey,
+        label: formatStockDate(dateKey),
+        ownRows: groupRows.filter((row) => row.type === "OWN"),
+        cmtRows: groupRows.filter((row) => row.type !== "OWN"),
+      }))
+      .sort((a, b) => {
+        if (a.dateKey === "undated") return 1;
+        if (b.dateKey === "undated") return -1;
+        return b.dateKey.localeCompare(a.dateKey);
+      });
+  }, [rows]);
+
+  const latestUnloadingDate = useMemo(() => {
+    return rows.reduce((latest, row) => {
+      const dateKey = normalizeDateForFilter(row.date);
+      if (!dateKey) return latest;
+      return !latest || dateKey > latest ? dateKey : latest;
+    }, "");
+  }, [rows]);
+
   function applyStockFilters() {
     setStockFilters({
       date: stockFilterDraft.date,
       quality: stockFilterDraft.quality,
+      width: stockFilterDraft.width,
       supplier: stockFilterDraft.supplier,
+      vehicle: stockFilterDraft.vehicle,
     });
   }
 
   function clearStockFilters() {
-    const empty = { date: "", quality: "", supplier: "" };
+    const empty = { date: "", quality: "", width: "", supplier: "", vehicle: "" };
     setStockFilterDraft(empty);
     setStockFilters(empty);
   }
@@ -551,7 +849,7 @@ export default function ArrivalManagement({ onHome }) {
             manualOwnVehicles: meta.manualOwnVehicles ?? "",
             manualCmtVehicles: meta.manualCmtVehicles ?? "",
             stockFileName: meta.stockFileName || "",
-            previousFileName: meta.previousFileName || "",
+            previousFileName: "",
           };
 
           lastAppliedRevisionRef.current = revision;
@@ -563,15 +861,9 @@ export default function ArrivalManagement({ onHome }) {
           setManualOwnVehicles(remotePayload.manualOwnVehicles);
           setManualCmtVehicles(remotePayload.manualCmtVehicles);
           setStockFile(null);
-          setPreviousFile(null);
           setStockBook(
             remotePayload.stockFileName
               ? { name: remotePayload.stockFileName }
-              : null
-          );
-          setPreviousBook(
-            remotePayload.previousFileName
-              ? { name: remotePayload.previousFileName }
               : null
           );
           setError("");
@@ -616,7 +908,7 @@ export default function ArrivalManagement({ onHome }) {
       manualOwnVehicles,
       manualCmtVehicles,
       stockFileName: stockBook?.name || stockFile?.name || "",
-      previousFileName: previousBook?.name || previousFile?.name || "",
+      previousFileName: "",
     }),
     [
       stockRows,
@@ -626,8 +918,6 @@ export default function ArrivalManagement({ onHome }) {
       manualCmtVehicles,
       stockBook?.name,
       stockFile?.name,
-      previousBook?.name,
-      previousFile?.name,
     ]
   );
 
@@ -739,10 +1029,10 @@ export default function ArrivalManagement({ onHome }) {
   }, [cloudReady, cloudLoading, cloudPayload, cloudPayloadText]);
 
   // --------------------------------------------------
-  // LOAD STOCK
+  // LOAD ONE WORKBOOK: STOCK + UNLOADING
   // --------------------------------------------------
 
-  async function loadStock(file) {
+  async function loadWorkbook(file) {
     if (!file) return;
 
     setError("");
@@ -751,91 +1041,70 @@ export default function ArrivalManagement({ onHome }) {
       setBusy(true);
 
       const book = await parseWorkbook(file);
-      const data = book.sheets.STOCK || [];
-      const parsed = parseStockRows(data);
+      const stockSheet = book.sheets.STOCK;
+      const unloadingSheet = book.sheets.UNLOADING;
 
-      // Invalid / empty workbook se pehle wala saved stock replace nahi hoga.
-      if (!parsed.length) {
+      // Dono required sheets honi chahiyein; invalid file se saved data replace nahi hoga.
+      if (!stockSheet || !unloadingSheet) {
         setError(
-          "STOCK sheet mein rows nahi milin. Sheet ke OWN/CMT headings aur Supplier header check karein. Purana saved stock safe hai."
+          "Excel file mein STOCK aur UNLOADING dono sheets honi chahiyein. Purana saved data safe hai."
         );
         return;
       }
 
+      const parsedStock = parseStockRows(
+        stockSheet,
+        book.sheetObjects?.STOCK
+      );
+      if (!parsedStock.length) {
+        setError(
+          "STOCK sheet mein valid rows nahi milin. OWN/CMT headings aur Supplier header check karein. Purana saved data safe hai."
+        );
+        return;
+      }
+
+      const hasUnloadingHeader = unloadingSheet.some((row) =>
+        row?.some((value) => /supplier/i.test(clean(value)))
+      );
+
+      if (!hasUnloadingHeader) {
+        setError(
+          "UNLOADING sheet mein Supplier header nahi mila. Purana saved data safe hai."
+        );
+        return;
+      }
+
+      // Same file ki STOCK sheet Arrival Stock mein aur UNLOADING sheet
+      // Unloading / Summary mein load hoti hai. Empty unloading rows allowed hain.
+ const unloadingDateRaw =
+  unloadingSheet?.[1]?.[9] ||
+  book.sheetObjects?.UNLOADING?.J2?.v ||
+  book.sheetObjects?.UNLOADING?.J2?.w ||
+  "";
+
+const unloadingSheetDate =
+  parseDailyArrivalDate(unloadingDateRaw) ||
+  normalizeDateForFilter(unloadingDateRaw) ||
+  "";
+
+console.log("UNLOADING J2 DATE:", unloadingDateRaw);
+console.log("PARSED UNLOADING DATE:", unloadingSheetDate);
+
+const parsedUnloading = parseSections(unloadingSheet, "current").map(
+  (row, index) => ({
+    ...row,
+    date: normalizeDateForFilter(row.date) || unloadingSheetDate,
+    id: `sheet-${Date.now()}-${index}`,
+  })
+);
       setStockFile(file);
-      setStockBook(book);
-      setStockRows(parsed);
-
-      if (!previousFile && !previousBook && book.sheets.UNLOADING) {
-        const prev = parseSections(
-          book.sheets.UNLOADING,
-          "previous"
-        );
-
-        if (prev.length) {
-          setPreviousBook({
-            name: `${file.name} — UNLOADING sheet`,
-          });
-
-          setRows(
-            prev.map((r, i) => ({
-              ...r,
-              id: `previous-${i}`,
-            }))
-          );
-        }
-      }
+      setStockBook({ name: book.name });
+      setStockRows(parsedStock);
+      setRows(parsedUnloading);
+      setSelected([]);
+      clearStockFilters();
     } catch (e) {
-      setError(
-        e.message || "Stock file could not be loaded."
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // --------------------------------------------------
-  // LOAD PREVIOUS UNLOADING
-  // --------------------------------------------------
-
-  async function loadPrevious(file) {
-    if (!file) return;
-
-    setError("");
-
-    try {
-      setBusy(true);
-
-      const book = await parseWorkbook(file);
-
-      const data =
-        book.sheets.UNLOADING ||
-        book.sheets.SUMMARY ||
-        book.sheets[Object.keys(book.sheets)[0]] ||
-        [];
-
-      const parsed = parseSections(data, "previous");
-
-      if (!parsed.length) {
-        setError(
-          "Previous unloading file mein valid rows nahi milin. Pehle se saved unloading data safe hai."
-        );
-        return;
-      }
-
-      setPreviousFile(file);
-      setPreviousBook(book);
-
-      setRows(
-        parsed.map((r, i) => ({
-          ...r,
-          id: `previous-${i}`,
-        }))
-      );
-    } catch (e) {
-      setError(
-        e.message || "Previous unloading file could not be loaded."
-      );
+      setError(e.message || "Arrival workbook could not be loaded.");
     } finally {
       setBusy(false);
     }
@@ -1478,6 +1747,75 @@ export default function ArrivalManagement({ onHome }) {
       </header>
 
       {section === "home" ? (
+        <>
+          <div className="arrival-panel">
+            <h3>Upload Daily Arrival Excel (Single File)</h3>
+
+            <div className="arrival-two-files">
+              <label className="arrival-file-picker">
+                <span className="arrival-file-picker__label">
+                  One Excel File — STOCK + UNLOADING Sheets
+                </span>
+
+                <span className="arrival-file-picker__control">
+                  <span className="arrival-file-picker__button">
+                    {busy ? "Reading Excel…" : "Choose Excel file"}
+                  </span>
+
+                  <span className="arrival-file-picker__name">
+                    {stockFile?.name || stockBook?.name || "No file selected"}
+                  </span>
+
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.xlsm"
+                    disabled={busy || cloudLoading}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      if (file) loadWorkbook(file);
+                      e.target.value = "";
+                    }}
+                  />
+                </span>
+              </label>
+            </div>
+
+            <p className="arrival-help">
+              Isi aik file ki STOCK sheet Arrival Stock mein aur UNLOADING sheet
+              Unloading / Summary mein load hogi. Previous Day ki alag file ki
+              zaroorat nahi.
+            </p>
+
+            {cloudLoading && (
+              <div className="arrival-status">
+                Loading shared Arrival data from Firebase…
+              </div>
+            )}
+
+            {cloudSaving && (
+              <div className="arrival-status">
+                Saving Arrival data to Firebase…
+              </div>
+            )}
+
+            {busy && (
+              <div className="arrival-status">Reading workbook…</div>
+            )}
+
+            {error && (
+              <div className="arrival-error" role="alert">
+                {error}
+              </div>
+            )}
+
+            {stockBook && (
+              <div className="arrival-status">
+                Workbook loaded: {stockRows.length} STOCK rows and {rows.length}
+                UNLOADING rows.
+              </div>
+            )}
+          </div>
+
         <section className="arrival-home">
           <button
             className="arrival-module-card arrival-module-card--stock"
@@ -1487,7 +1825,7 @@ export default function ArrivalManagement({ onHome }) {
             <span className="arrival-card-icon">▤</span>
             <span className="arrival-card-title">ARRIVAL STOCK</span>
             <span className="arrival-card-description">
-              Upload stock workbook and view available stock cards
+              View available stock cards from the uploaded workbook
             </span>
             <span className="arrival-card-open">Open section →</span>
           </button>
@@ -1507,6 +1845,7 @@ export default function ArrivalManagement({ onHome }) {
             <span className="arrival-card-open">Open section →</span>
           </button>
         </section>
+        </>
       ) : (
         <section className="arrival-workspace">
           <div className="arrival-section-heading">
@@ -1526,74 +1865,22 @@ export default function ArrivalManagement({ onHome }) {
           </div>
 
           <div className="arrival-panel">
-            <h3>
-              {section === "stock"
-                ? "Upload Arrival Excel"
-                : "Required Excel files"}
-            </h3>
+            <h3>Shared Arrival Workbook</h3>
 
-            <div className="arrival-two-files">
-              <label className="arrival-file-picker">
-                <span className="arrival-file-picker__label">
-                  Current Arrival Excel / Stock
-                </span>
-
-                <span className="arrival-file-picker__control">
-                  <span className="arrival-file-picker__button">
-                    Choose Excel file
-                  </span>
-
-                  <span className="arrival-file-picker__name">
-                    {stockFile?.name || stockBook?.name || "No file selected"}
-                  </span>
-
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls,.xlsm"
-                    onChange={(e) =>
-                      loadStock(e.target.files?.[0] || null)
-                    }
-                  />
-                </span>
-              </label>
-
-              {section === "unloading" && (
-                <label className="arrival-file-picker">
-                  <span className="arrival-file-picker__label">
-                    Previous day's Unloading (optional)
-                  </span>
-
-                  <span className="arrival-file-picker__control">
-                    <span className="arrival-file-picker__button">
-                      Choose Excel file
-                    </span>
-
-                    <span className="arrival-file-picker__name">
-                      {previousFile?.name ||
-                        previousBook?.name ||
-                        "No file selected"}
-                    </span>
-
-                    <input
-                      type="file"
-                      accept=".xlsx,.xls,.xlsm"
-                      onChange={(e) =>
-                        loadPrevious(e.target.files?.[0] || null)
-                      }
-                    />
-                  </span>
-                </label>
-              )}
+            <div className="arrival-status">
+              {stockBook?.name || "No workbook uploaded yet. Back to menu to choose one Excel file."}
             </div>
 
-            <label className="arrival-date-field">
-              <span>Report date</span>
-              <input
-                type="date"
-                value={reportDate}
-                onChange={(e) => setReportDate(e.target.value)}
-              />
-            </label>
+            {section === "unloading" && (
+              <label className="arrival-date-field">
+                <span>Report date</span>
+                <input
+                  type="date"
+                  value={reportDate}
+                  onChange={(e) => setReportDate(e.target.value)}
+                />
+              </label>
+            )}
 
             {cloudLoading && (
               <div className="arrival-status">
@@ -1608,9 +1895,7 @@ export default function ArrivalManagement({ onHome }) {
             )}
 
             {busy && (
-              <div className="arrival-status">
-                Reading workbook…
-              </div>
+              <div className="arrival-status">Reading workbook…</div>
             )}
 
             {error && (
@@ -1621,7 +1906,7 @@ export default function ArrivalManagement({ onHome }) {
 
             {stockBook && (
               <div className="arrival-status">
-                Stock loaded: {stockRows.length} rows from STOCK sheet.
+                {stockRows.length} STOCK rows loaded; {rows.length} UNLOADING rows loaded.
               </div>
             )}
           </div>
@@ -1663,6 +1948,21 @@ export default function ArrivalManagement({ onHome }) {
                 </label>
 
                 <label>
+                  Width
+                  <input
+                    type="text"
+                    placeholder="Width ka koi hissa likhein"
+                    value={stockFilterDraft.width}
+                    onChange={(e) =>
+                      setStockFilterDraft((old) => ({
+                        ...old,
+                        width: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
                   Supplier
                   <input
                     type="text"
@@ -1672,6 +1972,21 @@ export default function ArrivalManagement({ onHome }) {
                       setStockFilterDraft((old) => ({
                         ...old,
                         supplier: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Vehicle #
+                  <input
+                    type="text"
+                    placeholder="Vehicle number ka koi hissa likhein"
+                    value={stockFilterDraft.vehicle}
+                    onChange={(e) =>
+                      setStockFilterDraft((old) => ({
+                        ...old,
+                        vehicle: e.target.value,
                       }))
                     }
                   />
@@ -1691,42 +2006,218 @@ export default function ArrivalManagement({ onHome }) {
                     className="arrival-action"
                     onClick={clearStockFilters}
                   >
-                    Clear
+                    Clear Filters
                   </button>
                 </div>
               </div>
 
-              <div className="arrival-card-grid">
-                {filteredStockRows.map((r) => (
-                  <article
-                    className="arrival-data-card"
-                    key={r.stockId}
-                  >
-                    <div className="arrival-data-card__top">
-                      <b>
-                        {r.type === "OWN" ? "OWN" : "COMMERCIAL"}
-                      </b>
-                      <strong>{r.meter} Mtr</strong>
-                    </div>
-
-                    {FIELD_LABELS.filter(
-                      ([k]) => k !== "customer"
-                    ).map(([k, label]) => (
-                      <div
-                        className="arrival-data-field"
-                        key={k}
-                      >
-                        <span>{label}</span>
-                        <b>{r[k] || "—"}</b>
-                      </div>
-                    ))}
-                  </article>
-                ))}
-              </div>
-
-              {filteredStockRows.length === 0 && (
+              {filteredStockRows.length === 0 ? (
                 <div className="arrival-status">
                   Koi matching stock record nahi mila.
+                </div>
+              ) : (
+                <div className="arrival-stock-date-groups">
+                  {filteredStockGroups.map((group) => {
+                    const isLatestDate =
+                      group.dateKey !== "undated" &&
+                      group.dateKey === latestStockDate;
+
+                    return (
+                      <div
+                        className={`arrival-panel arrival-stock-date-group${
+                          isLatestDate ? " arrival-stock-date-group--latest" : ""
+                        }`}
+                        key={group.dateKey}
+                        style={{
+                          background: isLatestDate ? "#fffbeb" : "#ffffff",
+                          border: isLatestDate
+                            ? "3px solid #d97706"
+                            : "1px solid #d6dce5",
+                          borderRadius: "16px",
+                          padding: isLatestDate ? "18px" : "14px",
+                          marginBottom: "22px",
+                          boxShadow: isLatestDate
+                            ? "0 0 0 4px rgba(245, 158, 11, 0.16), 0 8px 22px rgba(146, 64, 14, 0.12)"
+                            : "0 3px 12px rgba(15, 23, 42, 0.05)",
+                        }}
+                      >
+                        <div
+                          className="arrival-stock-date-heading-wrap"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            flexWrap: "wrap",
+                            gap: "10px",
+                            padding: "10px 14px",
+                            marginBottom: "14px",
+                            borderRadius: "10px",
+                            background: isLatestDate ? "#78350f" : "#334155",
+                            color: "#ffffff",
+                            borderLeft: isLatestDate ? "6px solid #fbbf24" : "6px solid #94a3b8",
+                          }}
+                        >
+                          <h3
+                            className="arrival-stock-date-heading"
+                            style={{
+                              color: "#ffffff",
+                              margin: 0,
+                              fontSize: "1.15rem",
+                              fontWeight: 800,
+                            }}
+                          >
+                            {group.label}
+                          </h3>
+
+                          {isLatestDate && (
+                            <span
+                              className="arrival-stock-latest-badge"
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                padding: "6px 11px",
+                                borderRadius: "999px",
+                                background: "#fbbf24",
+                                color: "#451a03",
+                                fontSize: "0.75rem",
+                                fontWeight: 900,
+                                letterSpacing: "0.04em",
+                              }}
+                            >
+                              ★ LATEST ARRIVAL
+                            </span>
+                          )}
+                        </div>
+
+                        {group.ownRows.length > 0 && (
+                          <section
+                            className="arrival-stock-type-group arrival-stock-type-group--own"
+                            style={{
+                              background: "#eff6ff",
+                              border: "2px solid #93c5fd",
+                              borderRadius: "12px",
+                              padding: "12px",
+                              marginBottom: group.cmtRows.length > 0 ? "14px" : 0,
+                            }}
+                          >
+                            <h4
+                              className="arrival-stock-type-heading"
+                              style={{
+                                color: "#1d4ed8",
+                                background: "#dbeafe",
+                                borderLeft: "5px solid #2563eb",
+                                borderRadius: "7px",
+                                padding: "9px 12px",
+                                margin: "0 0 12px",
+                                fontWeight: 900,
+                              }}
+                            >
+                              OWN ARRIVAL
+                            </h4>
+                            <div className="arrival-card-grid">
+                              {group.ownRows.map((r) => (
+                                <article
+                                  className="arrival-data-card arrival-stock-card--own"
+                                  key={r.stockId}
+                                  style={{
+                                    background: "#f8fbff",
+                                    border: "1px solid #bfdbfe",
+                                    borderLeft: "5px solid #2563eb",
+                                  }}
+                                >
+                                  <div className="arrival-data-card__top">
+                                    <b style={{ color: "#1d4ed8" }}>OWN</b>
+                                    <strong>{r.meter} Mtr</strong>
+                                  </div>
+
+                                  {FIELD_LABELS.filter(([key]) => key !== "customer").map(([key, label]) => (
+                                    <div className="arrival-data-field" key={key}>
+                                      <span>{label}</span>
+                                      <b>{r[key] || "—"}</b>
+                                    </div>
+                                  ))}
+                                </article>
+                              ))}
+                            </div>
+                          </section>
+                        )}
+
+                        {group.cmtRows.length > 0 && (
+                          <section
+                            className="arrival-stock-type-group arrival-stock-type-group--commercial"
+                            style={{
+                              background: "#fff7ed",
+                              border: "2px solid #fdba74",
+                              borderRadius: "12px",
+                              padding: "12px",
+                            }}
+                          >
+                            <h4
+                              className="arrival-stock-type-heading"
+                              style={{
+                                color: "#c2410c",
+                                background: "#ffedd5",
+                                borderLeft: "5px solid #ea580c",
+                                borderRadius: "7px",
+                                padding: "9px 12px",
+                                margin: "0 0 12px",
+                                fontWeight: 900,
+                              }}
+                            >
+                              COMMERCIAL ARRIVAL
+                            </h4>
+                            <div className="arrival-card-grid">
+                              {group.cmtRows.map((r) => (
+                                <article
+                                  className="arrival-data-card arrival-stock-card--commercial"
+                                  key={r.stockId}
+                                  style={{
+                                    background: "#fffaf5",
+                                    border: "1px solid #fed7aa",
+                                    borderLeft: "5px solid #ea580c",
+                                  }}
+                                >
+                                  <div className="arrival-data-card__top">
+                                    <b style={{ color: "#c2410c" }}>COMMERCIAL</b>
+                                    <strong>{r.meter} Mtr</strong>
+                                  </div>
+
+                                  {FIELD_LABELS.filter(([key]) => key !== "customer").map(([key, label]) => (
+                                    <div className="arrival-data-field" key={key}>
+                                      <span>{label}</span>
+                                      <b>{r[key] || "—"}</b>
+                                    </div>
+                                  ))}
+                                </article>
+                              ))}
+                            </div>
+                          </section>
+                        )}
+
+                        {isLatestDate && (
+                          <div
+                            className="arrival-stock-latest-end"
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: "9px",
+                              marginTop: "16px",
+                              padding: "9px 12px",
+                              borderTop: "2px dashed #d97706",
+                              color: "#92400e",
+                              fontWeight: 900,
+                              fontSize: "0.78rem",
+                              letterSpacing: "0.06em",
+                            }}
+                          >
+                            <span>END OF LATEST ARRIVAL SECTION</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1795,50 +2286,234 @@ export default function ArrivalManagement({ onHome }) {
                   </h3>
 
                   <p className="arrival-help">
-                    Rows already present in current/previous unloading
+                    Rows already present in the workbook's UNLOADING sheet
                     are excluded using their stock details and vehicle.
                   </p>
 
-                  <div className="arrival-card-grid">
-                    {availableRows.map((r) => (
-                      <label
-                        className="arrival-data-card arrival-select-card"
-                        key={r.stockId}
-                      >
-                        <div className="arrival-data-card__top">
-                          <b>
-                            {r.type === "OWN" ? "OWN" : "COMMERCIAL"}
-                          </b>
+                  {availableDateGroups.length === 0 ? (
+                    <div className="arrival-status">
+                      Koi available stock record nahi mila.
+                    </div>
+                  ) : (
+                    <div className="arrival-stock-date-groups">
+                      {availableDateGroups.map((group) => {
+                        const isLatestDate =
+                          group.dateKey !== "undated" &&
+                          group.dateKey === latestAvailableDate;
 
-                          <input
-                            type="checkbox"
-                            checked={selected.includes(r.stockId)}
-                            onChange={(e) =>
-                              setSelected((old) =>
-                                e.target.checked
-                                  ? [...old, r.stockId]
-                                  : old.filter(
-                                      (x) => x !== r.stockId
-                                    )
-                              )
-                            }
-                          />
-                        </div>
-
-                        {FIELD_LABELS.filter(
-                          ([k]) => k !== "customer"
-                        ).map(([k, label]) => (
+                        return (
                           <div
-                            className="arrival-data-field"
-                            key={k}
+                            className={`arrival-panel arrival-stock-date-group${
+                              isLatestDate ? " arrival-stock-date-group--latest" : ""
+                            }`}
+                            key={group.dateKey}
+                            style={{
+                              background: isLatestDate ? "#fffbeb" : "#ffffff",
+                              border: isLatestDate ? "3px solid #d97706" : "1px solid #d6dce5",
+                              borderRadius: "16px",
+                              padding: isLatestDate ? "18px" : "14px",
+                              marginBottom: "22px",
+                              boxShadow: isLatestDate
+                                ? "0 0 0 4px rgba(245, 158, 11, 0.16), 0 8px 22px rgba(146, 64, 14, 0.12)"
+                                : "0 3px 12px rgba(15, 23, 42, 0.05)",
+                            }}
                           >
-                            <span>{label}</span>
-                            <b>{r[k] || "—"}</b>
+                            <div
+                              className="arrival-stock-date-heading-wrap"
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                flexWrap: "wrap",
+                                gap: "10px",
+                                padding: "10px 14px",
+                                marginBottom: "14px",
+                                borderRadius: "10px",
+                                background: isLatestDate ? "#78350f" : "#334155",
+                                color: "#ffffff",
+                                borderLeft: isLatestDate ? "6px solid #fbbf24" : "6px solid #94a3b8",
+                              }}
+                            >
+                              <h3
+                                className="arrival-stock-date-heading"
+                                style={{
+                                  color: "#ffffff",
+                                  margin: 0,
+                                  fontSize: "1.15rem",
+                                  fontWeight: 800,
+                                }}
+                              >
+                                {group.label}
+                              </h3>
+
+                              {isLatestDate && (
+                                <span
+                                  className="arrival-stock-latest-badge"
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "6px",
+                                    padding: "6px 11px",
+                                    borderRadius: "999px",
+                                    background: "#fbbf24",
+                                    color: "#451a03",
+                                    fontSize: "0.75rem",
+                                    fontWeight: 900,
+                                    letterSpacing: "0.04em",
+                                  }}
+                                >
+                                  ★ LATEST ARRIVAL
+                                </span>
+                              )}
+                            </div>
+
+                            {group.ownRows.length > 0 && (
+                              <section
+                                className="arrival-stock-type-group arrival-stock-type-group--own"
+                                style={{
+                                  background: "#eff6ff",
+                                  border: "2px solid #93c5fd",
+                                  borderRadius: "12px",
+                                  padding: "12px",
+                                  marginBottom: group.cmtRows.length > 0 ? "14px" : 0,
+                                }}
+                              >
+                                <h4
+                                  className="arrival-stock-type-heading"
+                                  style={{
+                                    color: "#1d4ed8",
+                                    background: "#dbeafe",
+                                    borderLeft: "5px solid #2563eb",
+                                    borderRadius: "7px",
+                                    padding: "9px 12px",
+                                    margin: "0 0 12px",
+                                    fontWeight: 900,
+                                  }}
+                                >
+                                  OWN ARRIVAL
+                                </h4>
+                                <div className="arrival-card-grid">
+                                  {group.ownRows.map((r) => (
+                                    <label
+                                      className="arrival-data-card arrival-select-card arrival-stock-card--own"
+                                      key={r.stockId}
+                                      style={{
+                                        background: "#f8fbff",
+                                        border: "1px solid #bfdbfe",
+                                        borderLeft: "5px solid #2563eb",
+                                      }}
+                                    >
+                                      <div className="arrival-data-card__top">
+                                        <b style={{ color: "#1d4ed8" }}>OWN</b>
+                                        <input
+                                          type="checkbox"
+                                          checked={selected.includes(r.stockId)}
+                                          onChange={(e) =>
+                                            setSelected((old) =>
+                                              e.target.checked
+                                                ? [...old, r.stockId]
+                                                : old.filter((x) => x !== r.stockId)
+                                            )
+                                          }
+                                        />
+                                      </div>
+                                      {FIELD_LABELS.filter(([k]) => k !== "customer").map(([k, label]) => (
+                                        <div className="arrival-data-field" key={k}>
+                                          <span>{label}</span>
+                                          <b>{r[k] || "—"}</b>
+                                        </div>
+                                      ))}
+                                    </label>
+                                  ))}
+                                </div>
+                              </section>
+                            )}
+
+                            {group.cmtRows.length > 0 && (
+                              <section
+                                className="arrival-stock-type-group arrival-stock-type-group--commercial"
+                                style={{
+                                  background: "#fff7ed",
+                                  border: "2px solid #fdba74",
+                                  borderRadius: "12px",
+                                  padding: "12px",
+                                }}
+                              >
+                                <h4
+                                  className="arrival-stock-type-heading"
+                                  style={{
+                                    color: "#c2410c",
+                                    background: "#ffedd5",
+                                    borderLeft: "5px solid #ea580c",
+                                    borderRadius: "7px",
+                                    padding: "9px 12px",
+                                    margin: "0 0 12px",
+                                    fontWeight: 900,
+                                  }}
+                                >
+                                  COMMERCIAL ARRIVAL
+                                </h4>
+                                <div className="arrival-card-grid">
+                                  {group.cmtRows.map((r) => (
+                                    <label
+                                      className="arrival-data-card arrival-select-card arrival-stock-card--commercial"
+                                      key={r.stockId}
+                                      style={{
+                                        background: "#fffaf5",
+                                        border: "1px solid #fed7aa",
+                                        borderLeft: "5px solid #ea580c",
+                                      }}
+                                    >
+                                      <div className="arrival-data-card__top">
+                                        <b style={{ color: "#c2410c" }}>COMMERCIAL</b>
+                                        <input
+                                          type="checkbox"
+                                          checked={selected.includes(r.stockId)}
+                                          onChange={(e) =>
+                                            setSelected((old) =>
+                                              e.target.checked
+                                                ? [...old, r.stockId]
+                                                : old.filter((x) => x !== r.stockId)
+                                            )
+                                          }
+                                        />
+                                      </div>
+                                      {FIELD_LABELS.filter(([k]) => k !== "customer").map(([k, label]) => (
+                                        <div className="arrival-data-field" key={k}>
+                                          <span>{label}</span>
+                                          <b>{r[k] || "—"}</b>
+                                        </div>
+                                      ))}
+                                    </label>
+                                  ))}
+                                </div>
+                              </section>
+                            )}
+
+                            {isLatestDate && (
+                              <div
+                                className="arrival-stock-latest-end"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  marginTop: "16px",
+                                  padding: "9px 12px",
+                                  borderTop: "2px dashed #d97706",
+                                  color: "#92400e",
+                                  fontWeight: 900,
+                                  fontSize: "0.78rem",
+                                  letterSpacing: "0.06em",
+                                }}
+                              >
+                                END OF LATEST ARRIVAL SECTION
+                              </div>
+                            )}
                           </div>
-                        ))}
-                      </label>
-                    ))}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   <button
                     type="button"
@@ -1972,90 +2647,214 @@ export default function ArrivalManagement({ onHome }) {
                 </form>
               </div>
 
-              {/* OWN UNLOADING CARDS */}
+              {/* DATE-WISE UNLOADING CARDS — latest date first */}
               <div className="arrival-panel">
-                <h3>
-                  Unloading Cards — Own ({ownRows.length})
-                </h3>
+                <h3>Unloading Cards — Date Wise ({rows.length})</h3>
 
-                <div className="arrival-card-grid">
-                  {ownRows.map((r) => (
-                    <article
-                      className="arrival-data-card"
-                      key={r.id}
-                    >
-                      <div className="arrival-data-card__top">
-                        <b>OWN · {r.supplier}</b>
+                {unloadingDateGroups.length === 0 ? (
+                  <div className="arrival-status">
+                    Abhi Unloading mein koi card available nahi hai.
+                  </div>
+                ) : (
+                  <div className="arrival-stock-date-groups">
+                    {unloadingDateGroups.map((group) => {
+                      const isLatestDate =
+                        group.dateKey !== "undated" &&
+                        group.dateKey === latestUnloadingDate;
 
-                        <button
-                          type="button"
-                          onClick={() => removeRow(r.id)}
+                      return (
+                        <div
+                          className={`arrival-panel arrival-stock-date-group${
+                            isLatestDate ? " arrival-stock-date-group--latest" : ""
+                          }`}
+                          key={group.dateKey}
+                          style={{
+                            background: isLatestDate ? "#fffbeb" : "#ffffff",
+                            border: isLatestDate ? "3px solid #d97706" : "1px solid #d6dce5",
+                            borderRadius: "16px",
+                            padding: isLatestDate ? "18px" : "14px",
+                            marginBottom: "22px",
+                            boxShadow: isLatestDate
+                              ? "0 0 0 4px rgba(245, 158, 11, 0.16), 0 8px 22px rgba(146, 64, 14, 0.12)"
+                              : "0 3px 12px rgba(15, 23, 42, 0.05)",
+                          }}
                         >
-                          Remove
-                        </button>
-                      </div>
+                          <div
+                            className="arrival-stock-date-heading-wrap"
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              flexWrap: "wrap",
+                              gap: "10px",
+                              padding: "10px 14px",
+                              marginBottom: "14px",
+                              borderRadius: "10px",
+                              background: isLatestDate ? "#78350f" : "#334155",
+                              color: "#ffffff",
+                              borderLeft: isLatestDate ? "6px solid #fbbf24" : "6px solid #94a3b8",
+                            }}
+                          >
+                            <h3
+                              className="arrival-stock-date-heading"
+                              style={{ color: "#ffffff", margin: 0, fontSize: "1.15rem", fontWeight: 800 }}
+                            >
+                              {group.label}
+                            </h3>
+                            {isLatestDate && (
+                              <span
+                                className="arrival-stock-latest-badge"
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "6px",
+                                  padding: "6px 11px",
+                                  borderRadius: "999px",
+                                  background: "#fbbf24",
+                                  color: "#451a03",
+                                  fontSize: "0.75rem",
+                                  fontWeight: 900,
+                                  letterSpacing: "0.04em",
+                                }}
+                              >
+                                ★ LATEST ARRIVAL
+                              </span>
+                            )}
+                          </div>
 
-                      {FIELD_LABELS.map(([k, label]) => (
-                        <label
-                          className="arrival-data-field arrival-edit-field"
-                          key={k}
-                        >
-                          <span>{label}</span>
+                          {group.ownRows.length > 0 && (
+                            <section
+                              className="arrival-stock-type-group arrival-stock-type-group--own"
+                              style={{
+                                background: "#eff6ff",
+                                border: "2px solid #93c5fd",
+                                borderRadius: "12px",
+                                padding: "12px",
+                                marginBottom: group.cmtRows.length > 0 ? "14px" : 0,
+                              }}
+                            >
+                              <h4
+                                className="arrival-stock-type-heading"
+                                style={{
+                                  color: "#1d4ed8",
+                                  background: "#dbeafe",
+                                  borderLeft: "5px solid #2563eb",
+                                  borderRadius: "7px",
+                                  padding: "9px 12px",
+                                  margin: "0 0 12px",
+                                  fontWeight: 900,
+                                }}
+                              >
+                                OWN UNLOADING
+                              </h4>
+                              <div className="arrival-card-grid">
+                                {group.ownRows.map((r) => (
+                                  <article
+                                    className="arrival-data-card arrival-stock-card--own"
+                                    key={r.id}
+                                    style={{
+                                      background: "#f8fbff",
+                                      border: "1px solid #bfdbfe",
+                                      borderLeft: "5px solid #2563eb",
+                                    }}
+                                  >
+                                    <div className="arrival-data-card__top">
+                                      <b style={{ color: "#1d4ed8" }}>OWN · {r.supplier}</b>
+                                      <button type="button" onClick={() => removeRow(r.id)}>Remove</button>
+                                    </div>
+                                    {FIELD_LABELS.map(([k, label]) => (
+                                      <label className="arrival-data-field arrival-edit-field" key={k}>
+                                        <span>{label}</span>
+                                        <input
+                                          value={r[k] || ""}
+                                          onChange={(e) => updateRow(r.id, k, e.target.value)}
+                                        />
+                                      </label>
+                                    ))}
+                                  </article>
+                                ))}
+                              </div>
+                            </section>
+                          )}
 
-                          <input
-                            value={r[k] || ""}
-                            onChange={(e) =>
-                              updateRow(r.id, k, e.target.value)
-                            }
-                          />
-                        </label>
-                      ))}
-                    </article>
-                  ))}
-                </div>
-              </div>
+                          {group.cmtRows.length > 0 && (
+                            <section
+                              className="arrival-stock-type-group arrival-stock-type-group--commercial"
+                              style={{
+                                background: "#fff7ed",
+                                border: "2px solid #fdba74",
+                                borderRadius: "12px",
+                                padding: "12px",
+                              }}
+                            >
+                              <h4
+                                className="arrival-stock-type-heading"
+                                style={{
+                                  color: "#c2410c",
+                                  background: "#ffedd5",
+                                  borderLeft: "5px solid #ea580c",
+                                  borderRadius: "7px",
+                                  padding: "9px 12px",
+                                  margin: "0 0 12px",
+                                  fontWeight: 900,
+                                }}
+                              >
+                                COMMERCIAL UNLOADING
+                              </h4>
+                              <div className="arrival-card-grid">
+                                {group.cmtRows.map((r) => (
+                                  <article
+                                    className="arrival-data-card arrival-stock-card--commercial"
+                                    key={r.id}
+                                    style={{
+                                      background: "#fffaf5",
+                                      border: "1px solid #fed7aa",
+                                      borderLeft: "5px solid #ea580c",
+                                    }}
+                                  >
+                                    <div className="arrival-data-card__top">
+                                      <b style={{ color: "#c2410c" }}>COMMERCIAL · {r.supplier}</b>
+                                      <button type="button" onClick={() => removeRow(r.id)}>Remove</button>
+                                    </div>
+                                    {FIELD_LABELS.map(([k, label]) => (
+                                      <label className="arrival-data-field arrival-edit-field" key={k}>
+                                        <span>{label}</span>
+                                        <input
+                                          value={r[k] || ""}
+                                          onChange={(e) => updateRow(r.id, k, e.target.value)}
+                                        />
+                                      </label>
+                                    ))}
+                                  </article>
+                                ))}
+                              </div>
+                            </section>
+                          )}
 
-              {/* COMMERCIAL UNLOADING CARDS */}
-              <div className="arrival-panel">
-                <h3>
-                  Unloading Cards — Commercial ({cmtRows.length})
-                </h3>
-
-                <div className="arrival-card-grid">
-                  {cmtRows.map((r) => (
-                    <article
-                      className="arrival-data-card"
-                      key={r.id}
-                    >
-                      <div className="arrival-data-card__top">
-                        <b>COMMERCIAL · {r.supplier}</b>
-
-                        <button
-                          type="button"
-                          onClick={() => removeRow(r.id)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-
-                      {FIELD_LABELS.map(([k, label]) => (
-                        <label
-                          className="arrival-data-field arrival-edit-field"
-                          key={k}
-                        >
-                          <span>{label}</span>
-
-                          <input
-                            value={r[k] || ""}
-                            onChange={(e) =>
-                              updateRow(r.id, k, e.target.value)
-                            }
-                          />
-                        </label>
-                      ))}
-                    </article>
-                  ))}
-                </div>
+                          {isLatestDate && (
+                            <div
+                              className="arrival-stock-latest-end"
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                marginTop: "16px",
+                                padding: "9px 12px",
+                                borderTop: "2px dashed #d97706",
+                                color: "#92400e",
+                                fontWeight: 900,
+                                fontSize: "0.78rem",
+                                letterSpacing: "0.06em",
+                              }}
+                            >
+                              END OF LATEST ARRIVAL SECTION
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* PRINT PREVIEW */}
