@@ -1356,8 +1356,29 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
         }
       }
 
+            // Summary Image ke liye hi: font 2-3px bara + Commercial Total se gap khatam
+      if (kind === "summary") {
+        // 1. Commercial Total wale section aur Summary ke beech ka gap khatam
+        clone.querySelectorAll(".arrival-print-section").forEach((section) => {
+          section.style.marginBottom = "0";
+          section.style.paddingBottom = "0";
+        });
+
+        const summaryTotalsTable = clone.querySelector(".arrival-summary-totals");
+        if (summaryTotalsTable) {
+          summaryTotalsTable.style.setProperty("margin-top", "-1px", "important");
+          summaryTotalsTable.style.setProperty("margin-bottom", "0", "important");
+          // Upar wali line ke saath bilkul touch karne ke liye double border khatam
+          summaryTotalsTable.style.setProperty("border-top", "none", "important");
+        }
+      }
+
       clone.querySelectorAll(".arrival-summary-totals td, .arrival-summary-totals th").forEach((cell) => {
-        cell.style.fontSize = "12px";
+        // 2. Pehle 12px tha, ab 15px = sirf 3px bara, zyada bara nahi
+        cell.style.fontSize = "17px";
+        cell.style.lineHeight = "1.25";
+        cell.style.paddingTop = "3px";
+        cell.style.paddingBottom = "3px";
       });
 
       clone.querySelectorAll(".arrival-grand-total-row td").forEach((cell) => {
@@ -1742,10 +1763,111 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
   }
 
   // --------------------------------------------------
-  // REPORT COMPONENT
-  // --------------------------------------------------
+// REPORT TABLE
+// --------------------------------------------------
 
-  const Report = ({ kind }) => {
+function ReportTable({
+  rows,
+  type,
+  summary = false,
+  vehicles = 0,
+  showGrandTotal = false,
+  grandTotalMeters = 0,
+  grandTotalVehicles = 0,
+}) {
+  const filtered = rows.filter((r) => r.type === type);
+
+  const meterTotal = filtered.reduce(
+    (s, r) => s + number(r.meter),
+    0
+  );
+
+  const columns = summary
+    ? [
+        ["supplier", "Supplier"],
+        ["quality", "Quality"],
+        ["width", "Width"],
+        ["weave", "Weave"],
+        ["brt", "B / R / T"],
+        ["meter", "Meter"],
+        ["vehicle", "Vehicle"],
+        ["remarks", "Remarks"],
+      ]
+    : FIELD_LABELS;
+
+  return (
+    <div className="arrival-print-section">
+      <div className="arrival-print-band">
+        {type === "OWN" ? "Own Greige" : "Commercial Greige"}
+      </div>
+
+      <table className="arrival-report-table">
+        <thead>
+          <tr>
+            <th>S#</th>
+            {columns.map(([key, label]) => (
+              <th key={key}>{label}</th>
+            ))}
+          </tr>
+        </thead>
+
+        <tbody>
+          {filtered.map((r, i) => (
+            <tr key={r.id || `${type}-${i}`}>
+              <td>{i + 1}</td>
+              {columns.map(([key]) => (
+                <td key={key}>{r[key]}</td>
+              ))}
+            </tr>
+          ))}
+
+          <tr className="arrival-blank-row">
+            <td colSpan={columns.length + 1}></td>
+          </tr>
+        </tbody>
+
+        <tfoot>
+          <tr className="arrival-section-total">
+            {summary ? (
+              <>
+                <td colSpan={6} style={{ textAlign: "right", paddingRight: "8px" }}>
+                  {type === "OWN" ? "Own Total" : "Cmt Total"}
+                </td>
+                <td style={{ textAlign: "left", paddingLeft: "8px" }}>{meterTotal.toLocaleString()}</td>
+                <td colSpan={2}>{vehicles} VEHICLES</td>
+              </>
+            ) : (
+              <>
+                <td colSpan={7} style={{ textAlign: "right", paddingRight: "8px" }}>
+                  {type === "OWN" ? "Own Total" : "Cmt Total"}
+                </td>
+                <td style={{ textAlign: "left", paddingLeft: "8px" }}>{meterTotal.toLocaleString()}</td>
+                <td colSpan={2}>{vehicles} VEHICLES</td>
+              </>
+            )}
+          </tr>
+
+          {showGrandTotal && (
+            <tr className="arrival-grand-total-row">
+              {/* S# se Weave tak = 6 columns */}
+              <td colSpan={6} style={{ textAlign: "right", paddingRight: "8px" }}>GRAND TOTAL</td>
+              {/* B/R/T + Meter = 2 columns */}
+              <td colSpan={2} style={{ textAlign: "left", paddingLeft: "8px" }}>{grandTotalMeters.toLocaleString()}</td>
+              {/* Vehicle + Remarks = 2 columns */}
+              <td colSpan={2}>{grandTotalVehicles} VEHICLES</td>
+            </tr>
+          )}
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+// --------------------------------------------------
+// REPORT COMPONENT
+// --------------------------------------------------
+
+const Report = ({ kind }) => {
     const summary = kind === "summary";
 
     return (
@@ -1777,9 +1899,12 @@ const parsedUnloading = parseSections(unloadingSheet, "current").map(
           type="CMT"
           summary={summary}
           vehicles={cmtVehicles}
+          showGrandTotal={!summary}
+          grandTotalMeters={totalMeters}
+          grandTotalVehicles={vehicles}
         />
 
- {summary && (
+        {summary && (
           <table className="arrival-summary-totals">
             <tbody>
               <tr>
