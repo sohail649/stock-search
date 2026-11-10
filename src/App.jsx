@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import Reconciliation from "./Reconciliation.jsx";
 import ArrivalManagement from "./ArrivalManagement.jsx";
-import AuthGate from "./AuthGate.jsx";
 import AccessManagement from "./AccessManagement.jsx";
 import {
   collection,
@@ -11,9 +10,24 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
+  serverTimestamp,
+  onSnapshot,
 } from "firebase/firestore";
 import { db } from "./firebase.js";
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
+  signOut,
+} from "firebase/auth";
+import { auth, googleProvider } from "./firebase.js";
+import "./Auth.css";
 import "./App.css";
+
+// Existing first Super Admin account. Keep this UID unchanged.
+const SUPER_ADMIN_UID = "TDXw1GNV7UUtR6cu8JZ1zzgIQIK2";
 
 
 const bytesToBase64 = (bytes) => {
@@ -27,6 +41,72 @@ const base64ToBytes = (base64) => {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
+};
+
+// Browser cache: workbook bytes are stored per approved Firebase user.
+// IndexedDB is used instead of LocalStorage because stock workbooks can be large.
+const STOCK_CACHE_DB = "stock-manager-cache";
+const STOCK_CACHE_STORE = "workbooks";
+
+const openStockCacheDB = () => new Promise((resolve, reject) => {
+  if (!window.indexedDB) {
+    reject(new Error("IndexedDB is not available"));
+    return;
+  }
+  const request = window.indexedDB.open(STOCK_CACHE_DB, 1);
+  request.onupgradeneeded = () => {
+    const database = request.result;
+    if (!database.objectStoreNames.contains(STOCK_CACHE_STORE)) {
+      database.createObjectStore(STOCK_CACHE_STORE, { keyPath: "uid" });
+    }
+  };
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+
+const getStockCache = async (uid) => {
+  if (!uid) return null;
+  const database = await openStockCacheDB();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(STOCK_CACHE_STORE, "readonly");
+    const request = transaction.objectStore(STOCK_CACHE_STORE).get(uid);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => database.close();
+    transaction.onerror = () => database.close();
+  });
+};
+
+const saveStockCache = async (uid, stock) => {
+  if (!uid || !stock?.bytes) return;
+  const database = await openStockCacheDB();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(STOCK_CACHE_STORE, "readwrite");
+    transaction.objectStore(STOCK_CACHE_STORE).put({
+      uid,
+      uploadId: stock.uploadId,
+      fileName: stock.fileName || "Saved Excel file",
+      stockUpdatedTill: stock.stockUpdatedTill || "",
+      bytes: stock.bytes instanceof Uint8Array
+        ? stock.bytes.slice().buffer
+        : stock.bytes,
+      cachedAt: Date.now(),
+    });
+    transaction.oncomplete = () => { database.close(); resolve(); };
+    transaction.onerror = () => { database.close(); reject(transaction.error); };
+    transaction.onabort = () => { database.close(); reject(transaction.error); };
+  });
+};
+
+const deleteStockCache = async (uid) => {
+  if (!uid) return;
+  const database = await openStockCacheDB();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(STOCK_CACHE_STORE, "readwrite");
+    transaction.objectStore(STOCK_CACHE_STORE).delete(uid);
+    transaction.oncomplete = () => { database.close(); resolve(); };
+    transaction.onerror = () => { database.close(); reject(transaction.error); };
+  });
 };
 
 const SHEETS = [
@@ -448,6 +528,8 @@ function StockApp({ user, accessProfile, isSuperAdmin, onSignOut }) {
   const [hideZeroStock, setHideZeroStock] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [stockReady, setStockReady] = useState(false);
+  const [searchNotice, setSearchNotice] = useState("");
   const [currentView, setCurrentView] = useState("home");
   const [issuedDateFilter, setIssuedDateFilter] = useState("");
   const [receivedDateFilter, setReceivedDateFilter] = useState("");
@@ -460,29 +542,89 @@ function StockApp({ user, accessProfile, isSuperAdmin, onSignOut }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    const applyLoadedWorkbook = (loadedWorkbook, metadata) => {
+      if (cancelled) return;
+      setWorkbook(loadedWorkbook);
+      setFileName(metadata.fileName || "Saved Excel file");
+      setStockUpdatedTill(metadata.stockUpdatedTill || "");
+      setStockReady(true);
+      setIsLoading(false);
+      setSearchNotice("");
+    };
+
     const loadSavedWorkbook = async () => {
+      let cachedStock = null;
+      let cachedWorkbook = null;
+
+      // 1) Show this user's last successful workbook immediately from local cache.
+      try {
+        cachedStock = await getStockCache(user?.uid);
+        if (cancelled) return;
+        if (cachedStock?.bytes) {
+          const cachedBytes = cachedStock.bytes instanceof Uint8Array
+            ? cachedStock.bytes
+            : new Uint8Array(cachedStock.bytes);
+          cachedWorkbook = XLSX.read(cachedBytes, {
+            type: "array",
+            cellDates: true,
+          });
+          applyLoadedWorkbook(cachedWorkbook, cachedStock);
+        }
+      } catch (cacheError) {
+        console.warn("Local stock cache could not be read:", cacheError);
+      }
+
+      // 2) Check Firebase in the background for a newer successful upload.
       try {
         const currentRef = doc(db, "stock", "current");
         const currentSnap = await getDoc(currentRef);
+        if (cancelled) return;
+
         if (!currentSnap.exists()) {
-          setIsLoading(false);
+          await deleteStockCache(user?.uid).catch(() => {});
+          if (!cancelled) {
+            setWorkbook(null);
+            setFileName("");
+            setStockUpdatedTill("");
+            setStockReady(false);
+          }
           return;
         }
+
         const saved = currentSnap.data();
+
+        // The cached upload is already the current Firebase upload; no chunk download needed.
+        if (cachedStock?.uploadId && cachedStock.uploadId === saved.uploadId) {
+          if (!cancelled && cachedWorkbook) applyLoadedWorkbook(
+            cachedWorkbook,
+            {
+              fileName: saved.fileName || cachedStock.fileName,
+              stockUpdatedTill: saved.stockUpdatedTill || cachedStock.stockUpdatedTill,
+            },
+          );
+          return;
+        }
+
         const chunksSnap = await getDocs(
           collection(db, "stockBackups", saved.uploadId, "chunks"),
         );
         const chunks = chunksSnap.docs
           .map((item) => item.data())
           .sort((a, b) => a.index - b.index);
+
         if (
           cancelled ||
+          !saved.chunkCount ||
           chunks.length !== saved.chunkCount ||
           chunks.length === 0
         ) {
-          setIsLoading(false);
+          if (!cancelled && !cachedStock) {
+            setError("Saved stock file mukammal download nahi ho saki. Dobara try karein.");
+          }
           return;
         }
+
         const base64 = chunks.map((item) => item.data).join("");
         const bytes = base64ToBytes(base64);
         const savedWorkbook = XLSX.read(bytes, {
@@ -490,20 +632,30 @@ function StockApp({ user, accessProfile, isSuperAdmin, onSignOut }) {
           cellDates: true,
         });
         if (cancelled) return;
-        setWorkbook(savedWorkbook);
-        setFileName(saved.fileName || "Saved Excel file");
-        setStockUpdatedTill(saved.stockUpdatedTill || "");
+
+        applyLoadedWorkbook(savedWorkbook, saved);
+        // Cache write failure must not affect Firebase-loaded stock or app operation.
+        saveStockCache(user?.uid, {
+          uploadId: saved.uploadId,
+          fileName: saved.fileName || "Saved Excel file",
+          stockUpdatedTill: saved.stockUpdatedTill || "",
+          bytes,
+        }).catch((cacheError) => console.warn("Stock cache save failed:", cacheError));
       } catch (err) {
         console.error("Load failed:", err);
+        if (!cancelled && !cachedStock) {
+          setError("Saved stock load nahi ho saka. Internet ya Firebase connection check karein.");
+        }
       } finally {
         if (!cancelled) setIsLoading(false);
       }
     };
+
     loadSavedWorkbook();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user?.uid]);
 
   const allTotals = useMemo(() => {
     if (!workbook) return null;
@@ -690,6 +842,15 @@ function StockApp({ user, accessProfile, isSuperAdmin, onSignOut }) {
         setWorkbook(newWorkbook);
         setFileName(file.name);
         setStockUpdatedTill(newStockDate);
+        setStockReady(true);
+        setIsLoading(false);
+        setSearchNotice("");
+        saveStockCache(user?.uid, {
+          uploadId,
+          fileName: file.name,
+          stockUpdatedTill: newStockDate,
+          bytes,
+        }).catch((cacheError) => console.warn("Stock cache save failed:", cacheError));
         setSelectedSheet(SHEETS[0]);
         setQualityFilter("");
         setWidthFilter("");
@@ -1059,6 +1220,7 @@ function StockApp({ user, accessProfile, isSuperAdmin, onSignOut }) {
   }, [filteredRows, data.stockColumns]);
 
   const clearFilters = () => {
+    setSearchNotice("");
     setQualityFilter("");
     setWidthFilter("");
     setIgpFilter("");
@@ -1081,6 +1243,15 @@ function StockApp({ user, accessProfile, isSuperAdmin, onSignOut }) {
   };
 
   const handleSearch = () => {
+    if (!workbook) {
+      setSearchNotice(
+        isLoading
+          ? "Stock data is loading. Please wait..."
+          : "No stock data available. Please upload the Excel file first.",
+      );
+      return;
+    }
+    setSearchNotice("");
     setAppliedFilters({
       quality: qualityFilter,
       width: widthFilter,
@@ -1168,16 +1339,6 @@ function StockApp({ user, accessProfile, isSuperAdmin, onSignOut }) {
     </nav>
   );
 
-  if (isLoading)
-    return (
-      <main className="app">
-        <div className="empty-state">
-          <h3>Loading saved stock...</h3>
-          <p>stock data loading </p>
-        </div>
-      </main>
-    );
-
   if (currentView === "reconciliation") {
     return <Reconciliation onHome={() => setCurrentView("home")} />;
   }
@@ -1211,7 +1372,7 @@ if (currentView === "arrival") {
               <p>Inventory Management System</p>
             </div>
             <div className="status">
-              {workbook ? "● Excel Loaded" : "● Ready to Start"}
+              {workbook ? "● Excel Loaded" : isLoading ? "● Loading Stock..." : "● Ready to Start"}
             </div>
           </div>
           <div className="home-header-actions">
@@ -1232,6 +1393,16 @@ if (currentView === "arrival") {
           </div>
         </header>
 
+        {stockReady && (
+          <div style={{ margin: "12px 20px 0", padding: "9px 14px", borderRadius: "8px", background: "#dcfce7", color: "#166534", border: "1px solid #86efac", fontSize: "13px", fontWeight: 700 }}>
+            Data Loaded, App is Ready.
+          </div>
+        )}
+        {isLoading && !workbook && (
+          <div style={{ margin: "12px 20px 0", padding: "9px 14px", borderRadius: "8px", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", fontSize: "13px" }}>
+            Stock data is loading in the background. You can use other sections meanwhile.
+          </div>
+        )}
         <section className="home-hero">
           <div className="hero-copy">
             <span className="hero-eyebrow">SMART INVENTORY WORKSPACE</span>
@@ -2197,6 +2368,11 @@ if (currentView === "arrival") {
           <span>{stockUpdatedTill || "Date not found in Row 3"}</span>
         </div>
       )}
+      {stockReady && (
+        <div style={{ marginTop: "10px", padding: "9px 14px", borderRadius: "8px", background: "#dcfce7", color: "#166534", border: "1px solid #86efac", fontSize: "13px", fontWeight: 700 }}>
+          Data Loaded, App is Ready.
+        </div>
+      )}
       {error && (
         <div className="error-message" style={{ marginTop: "12px" }}>
           {error}
@@ -2221,6 +2397,11 @@ if (currentView === "arrival") {
             </option>
           ))}
         </select>
+        {searchNotice && (
+          <div style={{ margin: "12px 0", padding: "10px 14px", borderRadius: "8px", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", fontSize: "13px", fontWeight: 600 }}>
+            {searchNotice}
+          </div>
+        )}
         <div className="section-heading">
           <div>
             <h3>Search Filters</h3>
@@ -2550,17 +2731,235 @@ if (currentView === "arrival") {
   );
 }
 function App() {
+  const [user, setUser] = useState(null);
+  const [accessProfile, setAccessProfile] = useState(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
+  const [checkingAccess, setCheckingAccess] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    let profileUnsubscribe = null;
+    let checkVersion = 0;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      const thisCheck = ++checkVersion;
+      const isCurrent = () => active && thisCheck === checkVersion;
+
+      if (profileUnsubscribe) {
+        profileUnsubscribe();
+        profileUnsubscribe = null;
+      }
+
+      if (!isCurrent()) return;
+      setUser(currentUser);
+      setAuthError("");
+      setAccessProfile(null);
+      setIsSuperAdmin(false);
+
+      if (!currentUser) {
+        setCheckingAccess(false);
+        setAuthReady(true);
+        return;
+      }
+
+      // The neutral app shell stays visible while Firebase checks access.
+      setCheckingAccess(true);
+      setAuthReady(true);
+
+      if (currentUser.uid === SUPER_ADMIN_UID) {
+        if (!isCurrent()) return;
+        setIsSuperAdmin(true);
+        setAccessProfile({ status: "approved", role: "superAdmin" });
+        setCheckingAccess(false);
+        return;
+      }
+
+      try {
+        const profileRef = doc(db, "userAccess", currentUser.uid);
+        const profileSnap = await getDoc(profileRef);
+        if (!isCurrent()) return;
+
+        if (!profileSnap.exists()) {
+          const requestRef = doc(db, "accessRequests", currentUser.uid);
+          const requestSnap = await getDoc(requestRef);
+          if (!isCurrent()) return;
+
+          if (!requestSnap.exists()) {
+            await setDoc(requestRef, {
+              uid: currentUser.uid,
+              email: currentUser.email || "",
+              displayName: currentUser.displayName || "",
+              status: "pending",
+              requestedAt: serverTimestamp(),
+            });
+            if (!isCurrent()) return;
+            setAccessProfile({ status: "pending", role: "user" });
+          } else {
+            setAccessProfile(requestSnap.data());
+          }
+        } else {
+          setAccessProfile(profileSnap.data());
+        }
+
+        // Live approval updates open the app without requiring another login.
+        profileUnsubscribe = onSnapshot(
+          profileRef,
+          (snap) => {
+            if (isCurrent()) {
+              setAccessProfile(snap.exists() ? snap.data() : null);
+              setCheckingAccess(false);
+            }
+          },
+          (err) => {
+            console.error("Access listener failed", err);
+            if (isCurrent()) {
+              setAuthError("Access status update nahi ho saka. Internet ya Firebase Rules check karein.");
+              setCheckingAccess(false);
+            }
+          },
+        );
+        if (isCurrent()) setCheckingAccess(false);
+      } catch (err) {
+        console.error("Access check failed", err);
+        if (isCurrent()) {
+          setAuthError("Access check nahi ho saka. Internet ya Firebase Rules check karein.");
+          setAccessProfile(null);
+          setCheckingAccess(false);
+        }
+      }
+    });
+
+    return () => {
+      active = false;
+      checkVersion += 1;
+      unsubscribeAuth();
+      if (profileUnsubscribe) profileUnsubscribe();
+    };
+  }, []);
+
+  const signInGoogle = async () => {
+    setBusy(true);
+    setAuthError("");
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      setAuthError(err.message || "Google sign-in failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitEmail = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setAuthError("");
+    try {
+      if (mode === "register") {
+        const result = await createUserWithEmailAndPassword(auth, email.trim(), password);
+        if (displayName.trim()) {
+          await updateProfile(result.user, { displayName: displayName.trim() });
+        }
+      } else {
+        await signInWithEmailAndPassword(auth, email.trim(), password);
+      }
+    } catch (err) {
+      setAuthError(
+        err.code === "auth/email-already-in-use"
+          ? "Ye email pehle se registered hai. Login karein."
+          : err.code === "auth/invalid-credential"
+          ? "Email ya password ghalat hai."
+          : err.message || "Authentication failed.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signOutUser = async () => {
+    await signOut(auth);
+    setAccessProfile(null);
+    setIsSuperAdmin(false);
+    setCheckingAccess(false);
+  };
+
+  // Protected stock data is never rendered until Firebase confirms approval.
+  if (!authReady || (user && checkingAccess)) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="auth-brand">Stock Manager</div>
+          <h2>Opening Stock Manager</h2>
+          <p>Please wait while your account is verified.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (user && (isSuperAdmin || accessProfile?.status === "approved")) {
+    return (
+      <StockApp
+        user={user}
+        accessProfile={accessProfile}
+        isSuperAdmin={isSuperAdmin}
+        onSignOut={signOutUser}
+      />
+    );
+  }
+
+  if (user) {
+    const status = accessProfile?.status || "pending";
+    const blocked = status === "blocked";
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="auth-brand">Stock Manager</div>
+          <div className="auth-status-icon">{blocked ? "×" : "…"}</div>
+          <h2>{blocked ? "Access Blocked" : "Approval Pending"}</h2>
+          <p>
+            {blocked
+              ? "Aapka access admin ne block kar diya hai. App use karne ke liye admin se approval hasil karein."
+              : "Aapki access request admin ko bhej di gayi hai. Admin approval ke baad app use kar sakenge."}
+          </p>
+          <p>Meherbani karke wahi original/authorized Google account use karein jo admin ne approve kiya hai. Agar phir bhi access na mile to admin se rabta karein.</p>
+          <div className="auth-user-email">{user.email}</div>
+          {authError && <div className="auth-error">{authError}</div>}
+          <button className="auth-primary" onClick={signOutUser}>Sign out</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <AuthGate>
-      {({ user, accessProfile, isSuperAdmin, signOutUser }) => (
-        <StockApp
-          user={user}
-          accessProfile={accessProfile}
-          isSuperAdmin={isSuperAdmin}
-          onSignOut={signOutUser}
-        />
-      )}
-    </AuthGate>
+    <div className="auth-screen">
+      <div className="auth-card">
+        <div className="auth-brand">Stock Manager</div>
+        <h2>{mode === "register" ? "Request App Access" : "Sign in"}</h2>
+        <p>{mode === "register" ? "Account banayein; admin approval ke baad app open hogi." : "App use karne ke liye approved account se login karein."}</p>
+        <button className="auth-google" onClick={signInGoogle} disabled={busy}>Continue with Google</button>
+        <div className="auth-divider"><span>OR</span></div>
+        <form onSubmit={submitEmail} className="auth-form">
+          {mode === "register" && (
+            <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Your name" autoComplete="name" />
+          )}
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" autoComplete="email" required />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password (minimum 6 characters)" autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={6} required />
+          {authError && <div className="auth-error">{authError}</div>}
+          <button className="auth-primary" type="submit" disabled={busy}>
+            {busy ? "Please wait..." : mode === "register" ? "Create account & request approval" : "Login"}
+          </button>
+        </form>
+        <button className="auth-link" onClick={() => { setMode(mode === "register" ? "login" : "register"); setAuthError(""); }}>
+          {mode === "register" ? "Already registered? Login" : "New user? Create account"}
+        </button>
+      </div>
+    </div>
   );
 }
 
